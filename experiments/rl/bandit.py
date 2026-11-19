@@ -11,15 +11,16 @@ Learning algorithm: A2C (actor-critic), gamma = 0.9, decaying entropy bonus.
 Evaluation: cumulative regret = sum_t (p_max - p_{a_t}) over 2,000 fixed episodes; compared with Thompson Sampling,
 UCB1 and random choice.
 
-Run: python experiments/rl/rl_bandit.py --model dendra --updates 1500 --out runs/rl_dendra.json
+Run: python experiments/rl/bandit.py --model dendra --updates 1500 --out runs/rl_dendra.json
 """
 import argparse, json, math, os, sys, time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-from dendra.model import CorticalRegion, Neuromodulators, GPTBlock
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))   # repository root
+from dendra.model import CorticalRegion, Neuromodulators
+from experiments.baselines.gpt import GPTBlock
 
 p = argparse.ArgumentParser()
 p.add_argument("--model", default="dendra", choices=["dendra", "dendra_da", "gpt", "lstm"])

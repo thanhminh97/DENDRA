@@ -1,6 +1,6 @@
 """
 Plot PPO learning curves and print a summary table from the runs/ppo_*.json files
-written by ppo_recurrent.py.
+written by ppo.py.
 
 Usage:
   python experiments/rl/plot_ppo.py [results folder, default runs] [output image, default figures/rl_ppo.png]

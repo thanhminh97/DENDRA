@@ -4,3 +4,4 @@ runs/
 dendra_out/
 __pycache__/
 .ipynb_checkpoints/
+MUJOCO_LOG.TXT

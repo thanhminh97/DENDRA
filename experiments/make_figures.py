@@ -1,10 +1,14 @@
-"""Draw the README figures from experiments/results/*.json."""
+"""Draw the language-modeling figures of the README from experiments/results/language/*.json.
+
+Run from the repository root:  python experiments/make_figures.py
+(The RL figures are drawn by experiments/rl/plot_bandit.py and plot_ppo.py.)
+"""
 import json, os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-R = "experiments/results"
+R = "experiments/results/language"
 os.makedirs("figures", exist_ok=True)
 plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False})
 GREY, BLUE = "#9a9a9a", "#2a6fdb"

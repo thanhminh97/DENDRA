@@ -1,4 +1,4 @@
-"""Plot meta-RL bandit results from runs/rl_*_s*.json (or experiments/results/rl/)."""
+"""Plot meta-RL bandit results from runs/rl_*_s*.json (or experiments/results/rl_bandit/)."""
 import glob, json, os, sys
 import numpy as np
 import matplotlib

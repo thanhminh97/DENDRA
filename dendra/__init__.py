@@ -1,2 +1,3 @@
-from .model import DENDRA, GPT, HebbianSTDP, DendriticSpikingLayer, CorticalRegion, Neuromodulators
-from .fast import FastDendra, FastGPT, make_decoder
+"""DENDRA: a language model built from biological neuron mechanisms."""
+from .model import DENDRA, HebbianSTDP, DendriticSpikingLayer, CorticalRegion, Neuromodulators
+from .fast import FastDendra, make_decoder

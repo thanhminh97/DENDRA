@@ -5,20 +5,21 @@ Decode   : mean time per new token when the context already holds n tokens
            (DENDRA uses a constant-size synaptic state, GPT uses a KV cache).
 Randomly initialized models: speed does not depend on the weights.
 
-Run:  python scripts/bench_inference.py [--device cpu|cuda] [--threads 2]
+Run:  python experiments/language/bench_inference.py [--device cpu|cuda] [--threads 2]
 """
 import argparse, json, os, sys, time
 import torch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from dendra.model import DENDRA, GPT
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))   # repository root
+from dendra import DENDRA
+from experiments.baselines.gpt import GPT
 
 p = argparse.ArgumentParser()
 p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
 p.add_argument("--threads", type=int, default=2)
 p.add_argument("--ctx", default="128,512,1024,2048,4096")
 p.add_argument("--decode", type=int, default=16)
-p.add_argument("--out", default="experiments/results/bench_cpu.json")
+p.add_argument("--out", default="experiments/results/language/bench_cpu.json")
 a = p.parse_args()
 torch.set_num_threads(a.threads)
 dev = a.device

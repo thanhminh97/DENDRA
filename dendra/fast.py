@@ -1,4 +1,4 @@
-"""Fast decoder for DENDRA and GPT: static state + CUDA Graph (+ optional torch.compile).
+"""Fast decoder for DENDRA: static state + CUDA Graph (+ optional torch.compile).
 
     from dendra.fast import make_decoder
     logits, dec = make_decoder(model, prompt_ids)          # prefill + capture a CUDA Graph (if a GPU is present)
@@ -9,13 +9,11 @@ so on a GPU the CPU-side launch overhead dominates (~20 ms/step regardless of co
   1) Static state tensors -> the whole step is captured once as a CUDA Graph and replayed with one launch.
   2) q, k, v + NMDA gate + output gate fused into one matmul; softplus/sigmoid of parameters precomputed.
   3) Optional torch.compile to fuse the element-wise chain of the LIF loop into fewer kernels.
-GPT gets the same treatment (preallocated KV cache + CUDA Graph) for a fair comparison.
 """
 import contextlib
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .model import GPT
 
 AMP_DTYPE = torch.float16 if torch.cuda.is_available() else None
 
@@ -123,46 +121,6 @@ class FastDendra(nn.Module):
         return logits
 
 
-class FastGPT(nn.Module):
-    """GPT with a preallocated KV cache (no torch.cat per step) so it can run inside a CUDA Graph."""
-
-    def __init__(self, g, maxlen):
-        super().__init__()
-        self.g, self.maxlen = g.eval(), maxlen
-        self.L, self.H = len(g.blocks), g.blocks[0].h
-        self.d = g.emb.weight.shape[1]
-
-    def init_state(self, B, dev, dtype=torch.float32):
-        return torch.zeros(self.L, 2, B, self.H, self.maxlen, self.d // self.H, device=dev, dtype=dtype)
-
-    @torch.no_grad()
-    def from_prefill(self, st, dtype=torch.float32):
-        kv = st["kv"]; n = kv[0][0].shape[2]; B = kv[0][0].shape[0]
-        cache = self.init_state(B, kv[0][0].device, dtype)
-        for i, (k, v) in enumerate(kv):
-            cache[i, 0, :, :, :n] = k; cache[i, 1, :, :, :n] = v
-        return cache, torch.tensor(n, device=cache.device)
-
-    def step(self, tok, cache, pos):
-        g = self.g
-        x = g.emb(tok) + g.pos(pos.clamp(max=g.pos.num_embeddings - 1).view(1))      # [B, D]
-        invalid = (torch.arange(self.maxlen, device=x.device) > pos).view(1, 1, -1)  # positions not written yet
-        for i, b in enumerate(g.blocks):
-            B, D = x.shape
-            H, dh = b.h, D // b.h
-            qkv = b.qkv(b.ln1(x)).view(B, 3, H, dh)
-            q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]                                # [B, H, dh]
-            cache[i, 0].index_copy_(2, pos.view(1), k[:, :, None].to(cache.dtype))   # write K/V in place
-            cache[i, 1].index_copy_(2, pos.view(1), v[:, :, None].to(cache.dtype))
-            att = torch.einsum("bhd,bhnd->bhn", q, cache[i, 0].to(q.dtype)).float() * dh ** -0.5
-            att = att.masked_fill(invalid, float("-inf")).softmax(-1).to(q.dtype)
-            a = torch.einsum("bhn,bhnd->bhd", att, cache[i, 1].to(q.dtype)).reshape(B, D)
-            x = x + b.proj(a)
-            x = x + b.mlp(b.ln2(x))
-        pos.add_(1)
-        return g.ln(x) @ g.emb.weight.t()
-
-
 class Graphed:
     """Capture one generation step as a CUDA Graph and replay it with a single launch. Without a GPU it runs eagerly.
     fn(tok, *state) must update the state in place and return the logits."""
@@ -207,16 +165,12 @@ class Graphed:
 
 
 @torch.no_grad()
-def make_decoder(model, prompt_ids, use_graph=True, use_compile=False, maxlen=None):
+def make_decoder(model, prompt_ids, use_graph=True, use_compile=False):
     """Read the prompt (prefill), then return (last-token logits, dec) where next_logits = dec(tok [B])."""
     with autocast():
         lg, st = model.prefill(prompt_ids)
-    if isinstance(model, GPT):
-        fm = FastGPT(model, maxlen or (prompt_ids.shape[1] + 256))
-        state = list(fm.from_prefill(st, dtype=torch.float16 if AMP_DTYPE else torch.float32))
-    else:
-        fm = FastDendra(model)
-        state = list(fm.from_prefill(st))
+    fm = FastDendra(model)
+    state = list(fm.from_prefill(st))
     tok0 = lg[:, -1].argmax(-1)
     runner = Graphed(fm.step, tok0, state, use_graph, use_compile)
     return lg[:, -1], runner

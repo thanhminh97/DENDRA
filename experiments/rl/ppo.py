@@ -15,7 +15,7 @@ Environments (--env):
   mujoco:HalfCheetah-v5   full MuJoCo; add the suffix "-pomdp" to keep positions only (velocities hidden)
 
 Example:
-  python experiments/rl/ppo_recurrent.py --env minatar:breakout --core dendra --total 300000 --out runs/ppo.json
+  python experiments/rl/ppo.py --env minatar:breakout --core dendra --total 300000 --out runs/ppo.json
 
 File layout
   1. Settings (command line)

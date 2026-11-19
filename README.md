@@ -296,7 +296,7 @@ At short contexts GPT decodes 2–3x faster. DENDRA stays around 9 ms/token at e
 - **Data:** 200,000 Vietnamese TinyStories [10], byte-level BPE tokenizer with 8,192 tokens trained on the data.
 - **Training:** context 256, batch 32, 4,000 steps.
 - **Models:** d = 384, 6 regions/layers, about 16M parameters each.
-- **GPU allocation:** DENDRA on GPU 0, GPT on GPU 1, in parallel. Numbers are taken from the notebook output and stored in `experiments/results/kaggle_t4_tinystories_vi.json` and `bench_t4_kaggle.json`.
+- **GPU allocation:** DENDRA on GPU 0, GPT on GPU 1, in parallel. Numbers are taken from the notebook output and stored in `experiments/results/language/kaggle_t4_tinystories_vi.json` and `bench_t4_kaggle.json`.
 
 **Training (4,000 steps per model):**
 
@@ -412,7 +412,7 @@ Section 6 of the notebook compares the three modes (original / fast / fast + com
 ### 4.9. Atari-style reinforcement learning: discrete and continuous actions (PPO)
 
 **Setup:**
-- **Algorithm:** recurrent PPO (`experiments/rl/ppo_recurrent.py`), shared by discrete actions (Categorical policy) and continuous actions (Gaussian policy).
+- **Algorithm:** recurrent PPO (`experiments/rl/ppo.py`), shared by discrete actions (Categorical policy) and continuous actions (Gaussian policy).
 - **Cores compared:** DENDRA, LSTM, and a memoryless network that sees the last 4 frames (the standard Atari approach).
 - **DENDRA training:** backpropagation runs in parallel over time and clears the state exactly at episode boundaries. This matches step-by-step execution (error below 10⁻⁵) and is 17x faster.
 - **Budget:** 500,000 environment steps, 2 seeds per configuration, on CPU.
@@ -436,7 +436,7 @@ Section 6 of the notebook compares the three modes (original / fast / fast + com
 - **Continuous actions (Pendulum with hidden velocity):** the memoryless network that sees 4 frames wins by a wide margin.
     - Two consecutive frames are enough to infer the velocity, so this task does not really require long memory.
     - DENDRA and LSTM have not converged after 500,000 steps. DENDRA varies strongly between seeds (−441 and −991): with continuous actions it is less stable.
-- **Real Atari (ALE) and MuJoCo:** too heavy for a CPU. The pipeline has been smoke-tested on `atari:Breakout` and `mujoco:HalfCheetah-v5-pomdp`; the notebook `notebooks/DENDRA_RL_kaggle.ipynb` runs both in full on a Kaggle GPU.
+- **Real Atari (ALE) and MuJoCo:** too heavy for a CPU. The pipeline has been smoke-tested on `atari:Breakout` and `mujoco:HalfCheetah-v5-pomdp`; the notebook `experiments/notebooks/rl_kaggle.ipynb` runs both in full on a Kaggle GPU.
 
 ## 5. Discussion
 
@@ -485,31 +485,31 @@ mkdir -p data runs
 curl -o data/input.txt https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
 
 # Table 4.2 (CPU, about 10–25 minutes per run)
-python experiments/prototype/train.py --model gpt    --steps 1200 --out runs/gpt.json
-python experiments/prototype/train.py --model gpt    --steps 3000 --out runs/gpt_long.json
-python experiments/prototype/train.py --model dendra --steps 1200 --out runs/dendra_fb1.json
-python experiments/prototype/train.py --model dendra --steps 1200 --no_nm    --out runs/dendra_nonm.json
-python experiments/prototype/train.py --model dendra --steps 1200 --fb 2     --out runs/dendra_fb2.json
-python experiments/prototype/train.py --model dendra --steps 1200 --spike_in --out runs/dendra_spikein.json
+python experiments/language/shakespeare/train.py --model gpt    --steps 1200 --out runs/gpt.json
+python experiments/language/shakespeare/train.py --model gpt    --steps 3000 --out runs/gpt_long.json
+python experiments/language/shakespeare/train.py --model dendra --steps 1200 --out runs/dendra_fb1.json
+python experiments/language/shakespeare/train.py --model dendra --steps 1200 --no_nm    --out runs/dendra_nonm.json
+python experiments/language/shakespeare/train.py --model dendra --steps 1200 --fb 2     --out runs/dendra_fb2.json
+python experiments/language/shakespeare/train.py --model dendra --steps 1200 --spike_in --out runs/dendra_spikein.json
 
 # Section 4.4: operation counts and energy estimate
-python experiments/prototype/ops.py dendra_fb1 dendra_spikein
+python experiments/language/shakespeare/ops.py dendra_fb1 dendra_spikein
 
 # Section 4.5: inference speed (CPU or GPU)
-python scripts/bench_inference.py --threads 2
+python experiments/language/bench_inference.py --threads 2
 
-# Redraw the figures from experiments/results/
-python scripts/make_figures.py
+# Redraw the language figures from experiments/results/language/
+python experiments/make_figures.py
 
 # Section 4.8: meta-RL bandit (CPU, 4–17 minutes per run)
 for m in lstm gpt dendra dendra_da; do for s in 0 1; do
-  python experiments/rl/rl_bandit.py --model $m --seed $s --updates 1500 --out runs/rl_${m}_s${s}.json
+  python experiments/rl/bandit.py --model $m --seed $s --updates 1500 --out runs/rl_${m}_s${s}.json
 done; done
-python experiments/rl/plot_rl.py runs
+python experiments/rl/plot_bandit.py runs
 
 # Section 4.9: PPO, discrete and continuous actions (CPU: 3–20 minutes per run)
 for env in minatar:breakout pendulum-pomdp; do for core in mlp lstm dendra; do for s in 0 1; do
-  python experiments/rl/ppo_recurrent.py --env $env --core $core --seed $s --total 500000 \
+  python experiments/rl/ppo.py --env $env --core $core --seed $s --total 500000 \
          --out runs/ppo_$(echo $env | tr ':' '_')_${core}_s${s}.json
 done; done; done
 python experiments/rl/plot_ppo.py runs
@@ -519,8 +519,8 @@ python experiments/rl/plot_ppo.py runs
 The environment variable `NT` sets the number of CPU threads (default 1).
 
 **On Kaggle/Colab (GPU):**
-- `notebooks/DENDRA_kaggle.ipynb`: language modeling on Vietnamese TinyStories. Choose a GPU, enable Internet and *Run All*. The notebook downloads the data, trains a tokenizer, trains both models (in parallel if 2 GPUs are available), plots the results and benchmarks speed.
-- `notebooks/DENDRA_RL_kaggle.ipynb`: reinforcement learning on real Atari (discrete) and MuJoCo (continuous).
+- `experiments/notebooks/language_kaggle.ipynb`: language modeling on Vietnamese TinyStories. Choose a GPU, enable Internet and *Run All*. The notebook downloads the data, trains a tokenizer, trains both models (in parallel if 2 GPUs are available), plots the results and benchmarks speed.
+- `experiments/notebooks/rl_kaggle.ipynb`: reinforcement learning on real Atari (discrete) and MuJoCo (continuous).
 
 **Using the model in code:**
 
@@ -544,31 +544,43 @@ logits = dec(logits.argmax(-1))                     # each call = one decode ste
 
 ## 9. Project structure
 
+The repository has two parts: `dendra/` is the model itself and contains only DENDRA; `experiments/` holds everything used to compare it with other architectures.
+
 ```text
 .
-├── README.md                     this document
+├── README.md                         this document
 ├── requirements.txt
-├── dendra/
-│   ├── __init__.py
-│   ├── model.py                  DENDRA (3 modes) + GPT baseline (with KV cache)
-│   └── fast.py                   fast decoder: static state + CUDA Graph (+ torch.compile)
-├── experiments/
-│   ├── prototype/                exact code used for sections 4.2–4.4
-│   │   ├── dendra_proto.py
-│   │   ├── train.py              training + evaluation on Tiny Shakespeare
-│   │   └── ops.py                operation counts, energy estimate
-│   ├── rl/                       meta-RL bandit (4.8) + PPO Atari/MuJoCo (4.9): rl_bandit.py, ppo_recurrent.py, plot_*.py
-│   └── results/                  JSON results (CPU and Kaggle T4)
-├── scripts/
-│   ├── bench_inference.py        inference speed benchmark (section 4.5)
-│   └── make_figures.py           draws the README figures
-├── notebooks/
-│   ├── DENDRA_kaggle.ipynb       language modeling on GPU with Vietnamese data
-│   └── DENDRA_RL_kaggle.ipynb    reinforcement learning: Atari (discrete) + MuJoCo (continuous) on GPU
-└── figures/                      figures
+├── dendra/                           the DENDRA model (nothing else)
+│   ├── model.py                      building blocks + DENDRA, with 3 modes: forward / prefill / step_token
+│   └── fast.py                       fast decoder: static state + CUDA Graph (+ torch.compile)
+├── experiments/                      comparisons with other architectures
+│   ├── baselines/
+│   │   └── gpt.py                    GPT baseline (Transformer with KV cache) + its fast decoder
+│   ├── language/                     language modeling
+│   │   ├── shakespeare/              exact code used for sections 4.2–4.4 (CPU, character level)
+│   │   │   ├── dendra_proto.py       DENDRA and GPT as they were in those runs
+│   │   │   ├── train.py              training + evaluation on Tiny Shakespeare
+│   │   │   └── ops.py                operation counts, energy estimate
+│   │   └── bench_inference.py        inference speed, DENDRA vs GPT (section 4.5)
+│   ├── rl/                           reinforcement learning
+│   │   ├── bandit.py                 meta-RL on bandits: DENDRA, GPT, LSTM (section 4.8)
+│   │   ├── ppo.py                    recurrent PPO, Atari/MuJoCo: DENDRA, LSTM, memoryless cores (section 4.9)
+│   │   ├── plot_bandit.py
+│   │   └── plot_ppo.py
+│   ├── notebooks/                    Kaggle notebooks (GPU)
+│   │   ├── language_kaggle.ipynb     language modeling on Vietnamese TinyStories, DENDRA vs GPT
+│   │   └── rl_kaggle.ipynb           reinforcement learning on Atari + MuJoCo
+│   ├── results/                      JSON results behind every table
+│   │   ├── language/
+│   │   ├── rl_bandit/
+│   │   └── rl_ppo/
+│   └── make_figures.py               draws the language-modeling figures
+└── figures/                          figures used in this README
 ```
 
-`dendra/model.py` extends `dendra_proto.py`: it adds chunked `prefill()`, `step_token()`, a KV cache for GPT, and a convolutional EMA for the neuromodulators. In training mode both versions are numerically identical. The GPT baseline in the new version uses `scaled_dot_product_attention` instead of `nn.MultiheadAttention`.
+All commands are run from the repository root. Scripts in `experiments/` import the model with `from dendra import DENDRA` and the baseline with `from experiments.baselines.gpt import GPT`.
+
+`dendra/model.py` extends `experiments/language/shakespeare/dendra_proto.py`: it adds chunked `prefill()`, `step_token()` and a convolutional EMA for the neuromodulators; in training mode both versions are numerically identical. The GPT in `experiments/baselines/gpt.py` adds a KV cache and uses `scaled_dot_product_attention` instead of `nn.MultiheadAttention`.
 
 ## 10. About the name
 
