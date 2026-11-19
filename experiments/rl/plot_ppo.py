@@ -1,56 +1,110 @@
-"""Plot PPO learning curves and print a summary table from runs/ppo_*.json."""
-import glob, json, os, sys
+"""
+Plot PPO learning curves and print a summary table from the runs/ppo_*.json files
+written by ppo_recurrent.py.
+
+Usage:
+  python experiments/rl/plot_ppo.py [results folder, default runs] [output image, default figures/rl_ppo.png]
+"""
+import glob
+import json
+import os
+import sys
+import warnings
 from collections import defaultdict
-import numpy as np
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 
-src = sys.argv[1] if len(sys.argv) > 1 else "runs"
-out = sys.argv[2] if len(sys.argv) > 2 else "figures/rl_ppo.png"
-STYLE = {"mlp": ("Memoryless (MLP/CNN)", "#9a9a9a", "--"), "lstm": ("LSTM", "#555555", ":"),
-         "lstm_big": ("Large LSTM (same #params)", "#222222", "-."), "dendra": ("DENDRA", "#2a6fdb", "-")}
-TITLE = {"minatar:breakout": "MinAtar Breakout (discrete)", "pendulum-pomdp": "Pendulum, velocity hidden (continuous)",
-         "atari:Breakout": "Atari Breakout (discrete)", "atari:Pong": "Atari Pong (discrete)",
-         "mujoco:HalfCheetah-v5-pomdp": "HalfCheetah, velocities hidden (continuous)", "mujoco:HalfCheetah-v5": "HalfCheetah (continuous)"}
-runs = defaultdict(lambda: defaultdict(list))
-for f in glob.glob(f"{src}/ppo_*.json"):
-    r = json.load(open(f))
-    runs[r["env"]][r["core"]].append(r)
+RESULTS_DIR = sys.argv[1] if len(sys.argv) > 1 else "runs"
+OUTPUT_PATH = sys.argv[2] if len(sys.argv) > 2 else "figures/rl_ppo.png"
+warnings.filterwarnings("ignore", "Mean of empty slice")   # early points where no episode has finished yet
+
+# core name -> (legend label, color, line style); the order here is also the drawing order
+STYLE = {
+    "mlp": ("Memoryless (MLP/CNN)", "#9a9a9a", "--"),
+    "lstm": ("LSTM", "#555555", ":"),
+    "lstm_big": ("Large LSTM (same #params)", "#222222", "-."),
+    "dendra": ("DENDRA", "#2a6fdb", "-"),
+}
+TITLES = {
+    "minatar:breakout": "MinAtar Breakout (discrete)",
+    "pendulum-pomdp": "Pendulum, velocity hidden (continuous)",
+    "atari:Breakout": "Atari Breakout (discrete)",
+    "atari:Pong": "Atari Pong (discrete)",
+    "mujoco:HalfCheetah-v5-pomdp": "HalfCheetah, velocities hidden (continuous)",
+    "mujoco:HalfCheetah-v5": "HalfCheetah (continuous)",
+}
 
 
-def smooth_curve(r, grid, win=100):
-    """Moving average of finished-episode returns, sampled on a grid of environment steps."""
-    ep = np.array(r["episodes"]) if r["episodes"] else np.zeros((0, 2))
-    out = []
-    for g in grid:
-        rr = ep[ep[:, 0] <= g][-win:, 1] if len(ep) else []
-        out.append(np.mean(rr) if len(rr) else np.nan)
-    return np.array(out)
+def load_runs(folder):
+    """runs[env][core] = list of result dicts (one per seed)."""
+    runs = defaultdict(lambda: defaultdict(list))
+    for path in glob.glob(os.path.join(folder, "ppo_*.json")):
+        with open(path) as f:
+            result = json.load(f)
+        runs[result["env"]][result["core"]].append(result)
+    return runs
 
 
-envs = sorted(runs)
-fig, axes = plt.subplots(1, len(envs), figsize=(6.5 * len(envs), 4), squeeze=False)
-plt.rcParams.update({"font.size": 10})
-print(f"{'Environment':38} {'Core':24} {'Params':>8} {'Return, last 100 episodes':>26} {'Steps/s':>10}")
-for ax, env in zip(axes[0], envs):
-    total = max(r["total"] for rs in runs[env].values() for r in rs)
-    grid = np.linspace(total / 50, total, 50)
-    for core in ("mlp", "lstm", "lstm_big", "dendra"):
-        if core not in runs[env]: continue
-        lab, c, ls = STYLE[core]
-        curves = np.array([smooth_curve(r, grid) for r in runs[env][core]])
-        m = np.nanmean(curves, 0)
-        ax.plot(grid, m, ls, color=c, lw=1.8, label=f"{lab} ({len(curves)} seed{"s" if len(curves) > 1 else ""})")
-        if len(curves) > 1:
-            ax.fill_between(grid, np.nanmin(curves, 0), np.nanmax(curves, 0), color=c, alpha=0.12)
-        fin = [r["final_return_mean"] if r["final_return_mean"] is not None else np.nan for r in runs[env][core]]
-        sps = [r["total"] / r["time_s"] for r in runs[env][core]]
-        print(f"{env:38} {lab:24} {runs[env][core][0]['params']/1e3:7.0f}K {np.nanmean(fin) if not np.all(np.isnan(fin)) else np.nan:12.2f} ± {np.nanstd(fin) if not np.all(np.isnan(fin)) else np.nan:6.2f} {np.mean(sps):10.0f}")
-    ax.set_title(TITLE.get(env, env), loc="left", fontsize=11)
-    ax.set_xlabel("environment steps"); ax.set_ylabel("episode return (moving avg. of 100)")
-    ax.grid(alpha=0.25); ax.legend(fontsize=8, frameon=False)
-    for s_ in ("top", "right"): ax.spines[s_].set_visible(False)
-plt.tight_layout()
-os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-plt.savefig(out, dpi=150)
+def smoothed_curve(result, grid, window=100):
+    """Mean return of the last `window` finished episodes, read at every step count in `grid`."""
+    episodes = np.array(result["episodes"]) if result["episodes"] else np.zeros((0, 2))
+    curve = []
+    for step in grid:
+        recent = episodes[episodes[:, 0] <= step][-window:, 1]
+        curve.append(recent.mean() if len(recent) else np.nan)
+    return np.array(curve)
+
+
+def mean_and_std(values):
+    values = np.array([np.nan if v is None else v for v in values], dtype=float)
+    if np.all(np.isnan(values)):
+        return np.nan, np.nan
+    return np.nanmean(values), np.nanstd(values)
+
+
+def main():
+    runs = load_runs(RESULTS_DIR)
+    if not runs:
+        sys.exit(f"No ppo_*.json files found in {RESULTS_DIR}/")
+    envs = sorted(runs)
+    fig, axes = plt.subplots(1, len(envs), figsize=(6.5 * len(envs), 4), squeeze=False)
+    print(f"{'Environment':38} {'Core':26} {'Params':>8} {'Return, last 100 episodes':>26} {'Steps/s':>9}")
+
+    for ax, env in zip(axes[0], envs):
+        total_steps = max(r["total"] for results in runs[env].values() for r in results)
+        grid = np.linspace(total_steps / 50, total_steps, 50)
+        for core, (label, color, line_style) in STYLE.items():
+            results = runs[env].get(core)
+            if not results:
+                continue
+            curves = np.array([smoothed_curve(r, grid) for r in results])
+            n_seeds = len(curves)
+            seeds_text = f"{n_seeds} seed" + ("s" if n_seeds > 1 else "")
+            ax.plot(grid, np.nanmean(curves, 0), line_style, color=color, lw=1.8, label=f"{label} ({seeds_text})")
+            if n_seeds > 1:                                   # shaded band: min..max over seeds
+                ax.fill_between(grid, np.nanmin(curves, 0), np.nanmax(curves, 0), color=color, alpha=0.12)
+
+            mean, std = mean_and_std([r["final_return_mean"] for r in results])
+            steps_per_s = np.mean([r["total"] / r["time_s"] for r in results])
+            params = results[0]["params"] / 1e3
+            print(f"{env:38} {label:26} {params:7.0f}K {mean:16.2f} ± {std:7.2f} {steps_per_s:9.0f}")
+
+        ax.set_title(TITLES.get(env, env), loc="left", fontsize=11)
+        ax.set_xlabel("environment steps")
+        ax.set_ylabel("episode return (moving avg. of 100)")
+        ax.grid(alpha=0.25)
+        ax.legend(fontsize=8, frameon=False)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(OUTPUT_PATH) or ".", exist_ok=True)
+    plt.savefig(OUTPUT_PATH, dpi=150)
+    print(f"Figure saved to {OUTPUT_PATH}")
+
+
+if __name__ == "__main__":
+    main()
