@@ -1,0 +1,6 @@
+*.pt
+data/
+runs/
+dendra_out/
+__pycache__/
+.ipynb_checkpoints/

@@ -1,0 +1,186 @@
+{
+ "device": "Kaggle Tesla T4",
+ "source": "copied from the output of notebook DENDRA_kaggle.ipynb (section 6)",
+ "rows": [
+  {
+   "model": "dendra",
+   "batch": 1,
+   "ctx": 128,
+   "prefill_ms": 28.8,
+   "decode_ms": 20.68,
+   "tok_per_s": 48,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 1,
+   "ctx": 512,
+   "prefill_ms": 49.1,
+   "decode_ms": 21.26,
+   "tok_per_s": 47,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 1,
+   "ctx": 1024,
+   "prefill_ms": 71.2,
+   "decode_ms": 21.05,
+   "tok_per_s": 48,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 1,
+   "ctx": 2048,
+   "prefill_ms": 119.9,
+   "decode_ms": 20.1,
+   "tok_per_s": 50,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 1,
+   "ctx": 4096,
+   "prefill_ms": 225.3,
+   "decode_ms": 19.44,
+   "tok_per_s": 51,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 16,
+   "ctx": 128,
+   "prefill_ms": 39.7,
+   "decode_ms": 22.11,
+   "tok_per_s": 724,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 16,
+   "ctx": 512,
+   "prefill_ms": 137.1,
+   "decode_ms": 20.28,
+   "tok_per_s": 789,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 16,
+   "ctx": 1024,
+   "prefill_ms": 261.7,
+   "decode_ms": 20.4,
+   "tok_per_s": 784,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 16,
+   "ctx": 2048,
+   "prefill_ms": 760.6,
+   "decode_ms": 21.76,
+   "tok_per_s": 735,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "dendra",
+   "batch": 16,
+   "ctx": 4096,
+   "prefill_ms": 1278.0,
+   "decode_ms": 20.48,
+   "tok_per_s": 781,
+   "mem_mb_per_seq": 0.59
+  },
+  {
+   "model": "gpt",
+   "batch": 1,
+   "ctx": 128,
+   "prefill_ms": 3.1,
+   "decode_ms": 2.99,
+   "tok_per_s": 334,
+   "mem_mb_per_seq": 1.48
+  },
+  {
+   "model": "gpt",
+   "batch": 1,
+   "ctx": 512,
+   "prefill_ms": 3.9,
+   "decode_ms": 2.79,
+   "tok_per_s": 358,
+   "mem_mb_per_seq": 5.02
+  },
+  {
+   "model": "gpt",
+   "batch": 1,
+   "ctx": 1024,
+   "prefill_ms": 3.3,
+   "decode_ms": 3.05,
+   "tok_per_s": 328,
+   "mem_mb_per_seq": 9.74
+  },
+  {
+   "model": "gpt",
+   "batch": 1,
+   "ctx": 2048,
+   "prefill_ms": 4.9,
+   "decode_ms": 2.78,
+   "tok_per_s": 360,
+   "mem_mb_per_seq": 19.18
+  },
+  {
+   "model": "gpt",
+   "batch": 1,
+   "ctx": 4096,
+   "prefill_ms": 11.5,
+   "decode_ms": 3.0,
+   "tok_per_s": 333,
+   "mem_mb_per_seq": 38.05
+  },
+  {
+   "model": "gpt",
+   "batch": 16,
+   "ctx": 128,
+   "prefill_ms": 3.7,
+   "decode_ms": 2.98,
+   "tok_per_s": 5369,
+   "mem_mb_per_seq": 1.48
+  },
+  {
+   "model": "gpt",
+   "batch": 16,
+   "ctx": 512,
+   "prefill_ms": 13.5,
+   "decode_ms": 2.93,
+   "tok_per_s": 5461,
+   "mem_mb_per_seq": 5.02
+  },
+  {
+   "model": "gpt",
+   "batch": 16,
+   "ctx": 1024,
+   "prefill_ms": 33.3,
+   "decode_ms": 4.73,
+   "tok_per_s": 3383,
+   "mem_mb_per_seq": 9.74
+  },
+  {
+   "model": "gpt",
+   "batch": 16,
+   "ctx": 2048,
+   "prefill_ms": 101.3,
+   "decode_ms": 8.61,
+   "tok_per_s": 1858,
+   "mem_mb_per_seq": 19.18
+  },
+  {
+   "model": "gpt",
+   "batch": 16,
+   "ctx": 4096,
+   "prefill_ms": 269.5,
+   "decode_ms": 17.33,
+   "tok_per_s": 923,
+   "mem_mb_per_seq": 38.05
+  }
+ ]
+}

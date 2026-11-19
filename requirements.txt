@@ -1,0 +1,9 @@
+torch>=2.1
+numpy
+tokenizers
+datasets
+matplotlib
+gymnasium>=1.1
+ale-py
+mujoco
+minatar

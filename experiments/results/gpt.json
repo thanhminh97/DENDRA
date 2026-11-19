@@ -1,0 +1,66 @@
+{
+ "val_loss": 1.7395796120166778,
+ "val_bpc": 2.509682879488008,
+ "acc_full": 0.4825805723667145,
+ "model": "gpt",
+ "params": 816000,
+ "steps": 1200,
+ "train_time_s": 426.6911246776581,
+ "fb": 1,
+ "neuromod": true,
+ "log": [
+  {
+   "step": 0,
+   "loss": 4.201632976531982
+  },
+  {
+   "step": 100,
+   "loss": 2.5541605949401855
+  },
+  {
+   "step": 200,
+   "loss": 2.381861686706543
+  },
+  {
+   "step": 300,
+   "loss": 2.2313015460968018
+  },
+  {
+   "step": 400,
+   "loss": 1.9910860061645508
+  },
+  {
+   "step": 500,
+   "loss": 1.8483809232711792
+  },
+  {
+   "step": 600,
+   "loss": 1.7392137050628662
+  },
+  {
+   "step": 700,
+   "loss": 1.7080410718917847
+  },
+  {
+   "step": 800,
+   "loss": 1.609863042831421
+  },
+  {
+   "step": 900,
+   "loss": 1.6277521848678589
+  },
+  {
+   "step": 1000,
+   "loss": 1.544252872467041
+  },
+  {
+   "step": 1100,
+   "loss": 1.5677810907363892
+  },
+  {
+   "step": 1199,
+   "loss": 1.5628111362457275
+  }
+ ],
+ "sample": "ROMEO:\nSo dusting our lady, thou hange?\n\nFirst Servant, my mise to my bride,\nI am the is man the our nague against to thou tell\nIt will the of my got, which he like tend,\nHenry his father, and that smeasting for to dregt\nWhich ease and disput thou I curbect! but world:\nWhy dest I chart about his left of hi"
+}

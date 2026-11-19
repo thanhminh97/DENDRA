@@ -1,0 +1,76 @@
+{
+ "device": "cpu",
+ "threads": 2,
+ "rows": [
+  {
+   "model": "dendra",
+   "ctx": 128,
+   "prefill_ms": 58.19413599999734,
+   "decode_ms": 9.41057699999881,
+   "state_mb": 0.294912
+  },
+  {
+   "model": "gpt",
+   "ctx": 128,
+   "prefill_ms": 24.043445000074826,
+   "decode_ms": 3.254666593749178,
+   "state_mb": 1.778688
+  },
+  {
+   "model": "dendra",
+   "ctx": 512,
+   "prefill_ms": 158.80660499999522,
+   "decode_ms": 9.423574437500193,
+   "state_mb": 0.294912
+  },
+  {
+   "model": "gpt",
+   "ctx": 512,
+   "prefill_ms": 90.24092399999972,
+   "decode_ms": 3.9446435468750707,
+   "state_mb": 5.317632
+  },
+  {
+   "model": "dendra",
+   "ctx": 1024,
+   "prefill_ms": 325.5818829999271,
+   "decode_ms": 10.257512359375554,
+   "state_mb": 0.294912
+  },
+  {
+   "model": "gpt",
+   "ctx": 1024,
+   "prefill_ms": 202.8691399999616,
+   "decode_ms": 4.325183859373638,
+   "state_mb": 10.036224
+  },
+  {
+   "model": "dendra",
+   "ctx": 2048,
+   "prefill_ms": 563.025704000097,
+   "decode_ms": 7.985134359374868,
+   "state_mb": 0.294912
+  },
+  {
+   "model": "gpt",
+   "ctx": 2048,
+   "prefill_ms": 395.9744439999895,
+   "decode_ms": 7.544417984373553,
+   "state_mb": 19.473408
+  },
+  {
+   "model": "dendra",
+   "ctx": 4096,
+   "prefill_ms": 1234.9804230000245,
+   "decode_ms": 9.17755101562534,
+   "state_mb": 0.294912
+  },
+  {
+   "model": "gpt",
+   "ctx": 4096,
+   "prefill_ms": 1054.3349880000505,
+   "decode_ms": 11.711365890626269,
+   "state_mb": 38.347776
+  }
+ ]
+}

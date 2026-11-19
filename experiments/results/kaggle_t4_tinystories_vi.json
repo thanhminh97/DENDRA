@@ -1,0 +1,114 @@
+{
+ "device": "Kaggle Tesla T4 x2",
+ "data": "nampdn-ai/tinystories-vietnamese, 200k stories, BPE 8192",
+ "dendra": {
+  "params_M": 16.15,
+  "steps": 4000,
+  "ms_per_step_approx": 390,
+  "acc": 0.53,
+  "spike_rates": [
+   0.143,
+   0.147,
+   0.146,
+   0.147,
+   0.149,
+   0.149
+  ],
+  "reflex": [
+   {
+    "thr": 0.5,
+    "exit_frac": 0.343,
+    "acc_exited": 0.775,
+    "acc_mixed": 0.523
+   },
+   {
+    "thr": 0.7,
+    "exit_frac": 0.209,
+    "acc_exited": 0.886,
+    "acc_mixed": 0.529
+   },
+   {
+    "thr": 0.9,
+    "exit_frac": 0.1,
+    "acc_exited": 0.97,
+    "acc_mixed": 0.531
+   }
+  ],
+  "tau_learned_by_region": [
+   [
+    2.2,
+    3.4,
+    10.4,
+    33.5,
+    45.2,
+    59.2
+   ],
+   [
+    2.2,
+    7.2,
+    14.0,
+    20.7,
+    52.4,
+    111.2
+   ],
+   [
+    2.7,
+    5.0,
+    11.1,
+    21.6,
+    36.6,
+    79.4
+   ],
+   [
+    2.4,
+    6.0,
+    13.2,
+    56.7,
+    44.1,
+    74.1
+   ],
+   [
+    2.8,
+    5.5,
+    13.9,
+    45.1,
+    62.9,
+    69.7
+   ],
+   [
+    2.5,
+    6.2,
+    21.2,
+    38.6,
+    42.6,
+    71.9
+   ]
+  ],
+  "parallel_vs_recurrent_maxdiff": 1.7166e-05,
+  "generate_tok_per_s": [
+   43,
+   46
+  ],
+  "val_loss": 2.032,
+  "ppl": 7.6,
+  "train_minutes_with_compile": 15.9,
+  "ms_per_step_with_compile": 238,
+  "generate_tok_per_s_cuda_graph": [
+   168,
+   277
+  ],
+  "note": "val_loss/acc from run 2 (torch.compile); speed without compile ~390 ms/step from run 1"
+ },
+ "gpt": {
+  "steps": 4000,
+  "train_minutes": 4.9,
+  "ms_per_step_approx": 73,
+  "val_loss": 1.915,
+  "ppl": 6.8,
+  "generate_tok_per_s": [
+   230,
+   253
+  ],
+  "note": "val_loss from run 1 (4,000 steps, no compile). In run 2 GPT only ran 1,032 steps because of a speed-measurement bug, so it is not used."
+ }
+}

@@ -1,0 +1,139 @@
+{
+ "val_loss": 1.532645508646965,
+ "val_bpc": 2.2111400747657193,
+ "acc_full": 0.54345703125,
+ "model": "gpt",
+ "params": 816000,
+ "steps": 3000,
+ "train_time_s": 1494.7069673538208,
+ "fb": 1,
+ "neuromod": true,
+ "spike_in": false,
+ "log": [
+  {
+   "step": 0,
+   "loss": 4.201632976531982
+  },
+  {
+   "step": 100,
+   "loss": 2.5541138648986816
+  },
+  {
+   "step": 200,
+   "loss": 2.3746237754821777
+  },
+  {
+   "step": 300,
+   "loss": 2.226564407348633
+  },
+  {
+   "step": 400,
+   "loss": 1.9955482482910156
+  },
+  {
+   "step": 500,
+   "loss": 1.8389779329299927
+  },
+  {
+   "step": 600,
+   "loss": 1.7192670106887817
+  },
+  {
+   "step": 700,
+   "loss": 1.6991932392120361
+  },
+  {
+   "step": 800,
+   "loss": 1.600418210029602
+  },
+  {
+   "step": 900,
+   "loss": 1.6060389280319214
+  },
+  {
+   "step": 1000,
+   "loss": 1.5210936069488525
+  },
+  {
+   "step": 1100,
+   "loss": 1.5355768203735352
+  },
+  {
+   "step": 1200,
+   "loss": 1.4472647905349731
+  },
+  {
+   "step": 1300,
+   "loss": 1.4650781154632568
+  },
+  {
+   "step": 1400,
+   "loss": 1.4894124269485474
+  },
+  {
+   "step": 1500,
+   "loss": 1.400591492652893
+  },
+  {
+   "step": 1600,
+   "loss": 1.3908514976501465
+  },
+  {
+   "step": 1700,
+   "loss": 1.3761440515518188
+  },
+  {
+   "step": 1800,
+   "loss": 1.390965223312378
+  },
+  {
+   "step": 1900,
+   "loss": 1.3500615358352661
+  },
+  {
+   "step": 2000,
+   "loss": 1.326697587966919
+  },
+  {
+   "step": 2100,
+   "loss": 1.2879085540771484
+  },
+  {
+   "step": 2200,
+   "loss": 1.3273981809616089
+  },
+  {
+   "step": 2300,
+   "loss": 1.2891042232513428
+  },
+  {
+   "step": 2400,
+   "loss": 1.2843024730682373
+  },
+  {
+   "step": 2500,
+   "loss": 1.2568894624710083
+  },
+  {
+   "step": 2600,
+   "loss": 1.3063931465148926
+  },
+  {
+   "step": 2700,
+   "loss": 1.3504350185394287
+  },
+  {
+   "step": 2800,
+   "loss": 1.356668472290039
+  },
+  {
+   "step": 2900,
+   "loss": 1.2749111652374268
+  },
+  {
+   "step": 2999,
+   "loss": 1.3219271898269653
+  }
+ ],
+ "sample": "ROMEO:\nWhat are is from his natify, for this shame!\n\nKING RICHARD III:\nWho shall something a little gman, thinks they so.\n\nLEONTES:\nShe has he noble Stile, and saves, as I do.\n\nISABELLA:\nI will keep thee, sir, I pray for my tongue,\nThe poor second slept on the counsel blood,\nWith purchase from the one of m"
+}
