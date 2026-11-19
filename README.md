@@ -15,7 +15,7 @@
 >
 > At 16M parameters on Vietnamese TinyStories (BPE tokenizer), both models tell coherent stories, but GPT reaches a lower perplexity after the same 4,000 steps: 6.8 versus 7.6. With CUDA Graphs and `torch.compile`, DENDRA generates text 4–6x faster and trains 1.6x faster than the naive implementation.
 >
-> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. With continuous actions (Pendulum with hidden velocity), it does not yet beat simple networks. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory.
+> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. On the real Atari Breakout (Kaggle GPU, 2M steps, 1 seed) it ends slightly above the LSTM (≈ 37 vs ≈ 34). With continuous actions (Pendulum and MuJoCo HalfCheetah, both with hidden velocities) it does not yet beat simple networks: on HalfCheetah it reaches about half the LSTM's return. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory.
 
 ---
 
@@ -436,7 +436,31 @@ Section 6 of the notebook compares the three modes (original / fast / fast + com
 - **Continuous actions (Pendulum with hidden velocity):** the memoryless network that sees 4 frames wins by a wide margin.
     - Two consecutive frames are enough to infer the velocity, so this task does not really require long memory.
     - DENDRA and LSTM have not converged after 500,000 steps. DENDRA varies strongly between seeds (−441 and −991): with continuous actions it is less stable.
-- **Real Atari (ALE) and MuJoCo:** too heavy for a CPU. The pipeline has been smoke-tested on `atari:Breakout` and `mujoco:HalfCheetah-v5-pomdp`; the notebook `experiments/notebooks/rl_kaggle.ipynb` runs both in full on a Kaggle GPU.
+
+**Real Atari and MuJoCo (Kaggle, T4 × 2, 1 seed).** These runs use `experiments/notebooks/rl_kaggle.ipynb` with the same PPO code:
+- **Atari Breakout:** the real ALE game, 84×84 images, 2M environment steps.
+- **HalfCheetah-v5:** joint velocities hidden, 6-D continuous actions, 1M environment steps.
+
+All three runs of each environment trained at the same time on the two GPUs. The returns below are the end points of the curves (moving average of 100 episodes), read from the figure.
+
+| Environment | Core | Params | Return at the end ↑ | Steps/s |
+| --- | --- | --- | --- | --- |
+| **Atari Breakout** (discrete, 4 actions) | Memoryless, sees 4 frames | 1.75M | ≈ 21 | ≈ 350 |
+| | LSTM | 2.01M | ≈ 34 | ≈ 300 |
+| | **DENDRA** | 2.23M | **≈ 37** | ≈ 235 |
+| **HalfCheetah, velocities hidden** (continuous, 6-D) | Memoryless, sees 4 frames | 16K | ≈ 1,150 | |
+| | **LSTM** | 105K | **≈ 1,190** | |
+| | DENDRA | 500K | ≈ 520 | |
+
+![PPO on real Atari Breakout and MuJoCo HalfCheetah with hidden velocities](figures/rl_ppo_kaggle.png)
+
+- **Discrete actions, real Atari:** the MinAtar result holds. DENDRA stays at or above the LSTM for almost the whole run and ends about 10% higher (≈ 37 vs ≈ 34). Both beat the 4-frame memoryless CNN by a wide margin (≈ 21). With a single seed the gap to the LSTM is suggestive, not conclusive.
+- **Continuous actions, MuJoCo:** DENDRA reaches only about half the return of the LSTM and of the memoryless network. It learns at the same speed for the first ~150k steps, then rises slowly and levels off near 500 after ~700k steps. Together with Pendulum, this confirms that **continuous control is DENDRA's weak spot.**
+- As on Pendulum, four stacked frames of positions are enough to work out the velocities, so the memoryless network does as well as the LSTM. This task tests fine-grained control more than memory.
+- **Possible causes (not yet tested):**
+  - The core reports spike counts over T = 4 ticks, so each L5 neuron can only output 5 levels (0, 0.25, …, 1), which may be too coarse for smooth torques.
+  - The PPO hyperparameters are the standard ones tuned for MLP/LSTM policies.
+  - Useful next checks: more ticks (T = 8), reading out membrane potentials instead of spike rates, and a learning-rate sweep for DENDRA.
 
 ### 4.10. Learning without backpropagation: a three-factor (dopamine) rule
 
