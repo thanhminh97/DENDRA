@@ -542,6 +542,90 @@ logits, dec = make_decoder(model, idx, use_compile=False)
 logits = dec(logits.argmax(-1))                     # each call = one decode step
 ```
 
+**Using DENDRA for reinforcement learning (discrete and continuous actions):**
+
+`dendra/rl.py` provides `DendraAgent`, an actor-critic whose memory is DENDRA (Hebbian synapses + spiking neurons + neuromodulators), and `DendraCore`, the memory alone if you build your own agent. The same class handles both kinds of action:
+
+| | Discrete (CartPole, Atari, ...) | Continuous (Pendulum, MuJoCo, ...) |
+| --- | --- | --- |
+| Create | `DendraAgent(obs_dim, n_actions)` | `DendraAgent(obs_dim, action_dim, continuous=True)` |
+| Policy | Categorical: `action` is an integer per environment | Gaussian with a learned std: `action` is a vector per environment |
+| Log-probability | `agent.log_prob(dist, action)` | `agent.log_prob(dist, action)` (summed over action dimensions) |
+
+The main calls:
+- `state = agent.init_state(n_envs)`: an empty memory. Its size stays the same however long the episode is.
+- `dist, value, state = agent.step(obs, state, done)`: one step for every environment. `obs` is `[N, obs_dim]` and `done` is `[N]`. Set `done[i] = 1` when environment i starts a new episode, and its memory is cleared.
+- `dist, values, state = agent.seq(obs, state, done)`: a whole segment of steps for training. `obs` is `[T, N, obs_dim]`. It runs in parallel over time and gives the same result as T calls to `step()`.
+- `agent.core.homeostasis_loss()`: add this to your loss to keep the firing rates near 15%. Call `agent.core.clear_rates()` before the forward pass you train on.
+
+A complete, runnable example: an A2C agent on CartPole. It goes from about 22 points (random play) to about 130 in 250 updates, which takes about 40 s on a CPU.
+
+```python
+import gymnasium as gym
+import torch
+from dendra.rl import DendraAgent
+
+N, T = 8, 32                                    # environments in parallel, steps per update
+SAME_STEP = {"autoreset_mode": gym.vector.AutoresetMode.SAME_STEP}   # reset inside the step that ends an episode
+
+# Discrete actions (Categorical policy)
+envs = gym.make_vec("CartPole-v1", num_envs=N, vectorization_mode="sync", vector_kwargs=SAME_STEP)
+agent = DendraAgent(obs_dim=4, n_actions=2)
+
+# Continuous actions (Gaussian policy): use these two lines instead
+# envs = gym.make_vec("Pendulum-v1", num_envs=N, vectorization_mode="sync", vector_kwargs=SAME_STEP)
+# agent = DendraAgent(obs_dim=3, n_actions=1, continuous=True)
+
+# Image observations (Atari): bring your own CNN that outputs 512 features
+# agent = DendraAgent(obs_dim=None, n_actions=4, encoder=my_cnn, encoder_dim=512)
+
+optimizer = torch.optim.Adam(agent.parameters(), lr=3e-4)
+obs = torch.as_tensor(envs.reset(seed=0)[0], dtype=torch.float32)
+done = torch.zeros(N)                           # done[i] = 1: env i starts a new episode -> its memory is cleared
+state = agent.init_state(N)                     # empty memory; its size never grows
+
+for update in range(100):
+    # 1) Act: one step at a time with the current memory
+    start_state = {k: v.clone() for k, v in state.items()}
+    seg = {"obs": [], "action": [], "reward": [], "done": []}
+    with torch.no_grad():
+        for t in range(T):
+            dist, value, state = agent.step(obs, state, done)
+            action = dist.sample()
+            next_obs, reward, terminated, truncated, _ = envs.step(action.numpy())
+            seg["obs"].append(obs); seg["action"].append(action); seg["done"].append(done)
+            seg["reward"].append(torch.as_tensor(reward, dtype=torch.float32))
+            obs = torch.as_tensor(next_obs, dtype=torch.float32)
+            done = torch.as_tensor(terminated | truncated, dtype=torch.float32)
+        _, next_value, _ = agent.step(obs, {k: v.clone() for k, v in state.items()}, done)
+    seg = {k: torch.stack(v) for k, v in seg.items()}            # each [T, N, ...]
+
+    # 2) Discounted returns (stop at episode boundaries)
+    returns, ret = torch.zeros(T, N), next_value
+    for t in reversed(range(T)):
+        episode_ended = done if t == T - 1 else seg["done"][t + 1]
+        ret = seg["reward"][t] + 0.99 * ret * (1 - episode_ended)
+        returns[t] = ret
+
+    # 3) Learn: re-run the whole segment in parallel over time (same result as T calls to step)
+    agent.core.clear_rates()
+    dist, values, _ = agent.seq(seg["obs"], start_state, seg["done"])
+    advantage = (returns - values).detach()
+    loss = (-(agent.log_prob(dist, seg["action"]) * advantage).mean()   # policy (A2C)
+            + 0.5 * ((returns - values) ** 2).mean()                    # value
+            + agent.core.homeostasis_loss())                            # keeps firing rates near 15%
+    optimizer.zero_grad(); loss.backward(); optimizer.step()
+```
+
+Notes:
+- **Continuous control:** scale or normalize the rewards (Pendulum rewards go down to about -16 per step). `experiments/rl/ppo.py` does this with a running normalizer.
+- **Images:** pass any CNN as `encoder`. `obs` can then have any shape `[N, ...]`, and `seq()` takes `[T, N, ...]`.
+- **Full PPO** (clipping, GAE, minibatches of whole environments, Atari/MuJoCo wrappers) is in `experiments/rl/ppo.py`:
+  ```bash
+  python experiments/rl/ppo.py --env atari:Breakout --core dendra --total 2000000              # discrete
+  python experiments/rl/ppo.py --env mujoco:HalfCheetah-v5-pomdp --core dendra --total 1000000  # continuous
+  ```
+
 ## 9. Project structure
 
 The repository has two parts: `dendra/` is the model itself and contains only DENDRA; `experiments/` holds everything used to compare it with other architectures.
@@ -552,7 +636,8 @@ The repository has two parts: `dendra/` is the model itself and contains only DE
 ├── requirements.txt
 ├── dendra/                           the DENDRA model (nothing else)
 │   ├── model.py                      building blocks + DENDRA, with 3 modes: forward / prefill / step_token
-│   └── fast.py                       fast decoder: static state + CUDA Graph (+ torch.compile)
+│   ├── fast.py                       fast decoder: static state + CUDA Graph (+ torch.compile)
+│   └── rl.py                         reinforcement learning: DendraCore (memory) + DendraAgent (actor-critic)
 ├── experiments/                      comparisons with other architectures
 │   ├── baselines/
 │   │   └── gpt.py                    GPT baseline (Transformer with KV cache) + its fast decoder
@@ -564,7 +649,7 @@ The repository has two parts: `dendra/` is the model itself and contains only DE
 │   │   └── bench_inference.py        inference speed, DENDRA vs GPT (section 4.5)
 │   ├── rl/                           reinforcement learning
 │   │   ├── bandit.py                 meta-RL on bandits: DENDRA, GPT, LSTM (section 4.8)
-│   │   ├── ppo.py                    recurrent PPO, Atari/MuJoCo: DENDRA, LSTM, memoryless cores (section 4.9)
+│   │   ├── ppo.py                    recurrent PPO, Atari/MuJoCo: DENDRA vs LSTM vs memoryless (section 4.9)
 │   │   ├── plot_bandit.py
 │   │   └── plot_ppo.py
 │   ├── notebooks/                    Kaggle notebooks (GPU)

@@ -20,7 +20,7 @@ Example:
 File layout
   1. Settings (command line)
   2. Environments (vectorized, reset automatically at the end of an episode)
-  3. Networks: encoder, the three cores, the actor-critic agent
+  3. Networks: encoder, the LSTM and memoryless cores (DENDRA's core is in dendra/rl.py), the agent
   4. PPO: reward normalization, rollout collection, advantages (GAE), policy update
   5. Main training loop and saving of results
 """
@@ -38,7 +38,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
-from dendra.model import CorticalRegion, Neuromodulators
+from dendra.rl import DendraCore, init_layer   # the DENDRA memory core (see dendra/rl.py)
 
 
 # ============================================================================ 1. Settings
@@ -174,13 +174,6 @@ def make_vec_env(frame_stack):
 
 
 # ============================================================================ 3. Networks
-def init_layer(layer, std=math.sqrt(2)):
-    """Orthogonal weights and zero bias: the standard PPO initialization."""
-    nn.init.orthogonal_(layer.weight, std)
-    nn.init.zeros_(layer.bias)
-    return layer
-
-
 class Encoder(nn.Module):
     """Turns one observation into a feature vector: a CNN for images, a small MLP for vectors."""
 
@@ -213,6 +206,7 @@ class Encoder(nn.Module):
 #   init_state(n)            -> memory for n environments (a dict of tensors)
 #   step(x, state, done)     -> (output, new state) for one time step; done[i] = 1 clears environment i's memory first
 #   seq(x, state, done)      -> optional: a whole segment of T steps at once, same result as T calls to step()
+# The DENDRA core (DendraCore) is part of the package: dendra/rl.py.
 
 class MLPCore(nn.Module):
     """No memory: one dense layer."""
@@ -244,120 +238,6 @@ class LSTMCore(nn.Module):
         keep = (1 - done)[:, None]                         # 0 for environments that start a new episode
         h, c = self.cell(x, (state["h"] * keep, state["c"] * keep))
         return h, {"h": h, "c": c}
-
-
-class DendraCore(nn.Module):
-    """
-    DENDRA as an RL memory: a stack of cortical regions (spiking dendritic E/I neurons + Hebbian synapses)
-    modulated by neuromodulators. Its memory has three parts:
-      S  [regions, N, heads, dh, dh]  Hebbian synaptic weights of each region (the fast-weight memory)
-      m  [N, d]                       running average of the input, read by the neuromodulators
-      t  [N]                          steps since the episode began (to normalize that average)
-    All three are cleared when a new episode starts.
-    """
-
-    def __init__(self, in_dim, d, regions=2, heads=4):
-        super().__init__()
-        self.inp = init_layer(nn.Linear(in_dim, d), 1.0)
-        self.regions = nn.ModuleList([CorticalRegion(d, heads, int(1.5 * d), 4, 4) for _ in range(regions)])
-        self.nm = Neuromodulators(d, regions, heads)
-        self.n_regions, self.n_heads, self.d = regions, heads, d
-        self.rates = []                                    # firing rates, collected for the homeostasis loss
-
-    def init_state(self, n):
-        dh = self.d // self.n_heads
-        return {"S": torch.zeros(self.n_regions, n, self.n_heads, dh, dh, device=DEVICE),
-                "m": torch.zeros(n, self.d, device=DEVICE),
-                "t": torch.zeros(n, device=DEVICE)}
-
-    def neuromodulator_signals(self, m, t):
-        """From the running input average m (after t+1 steps), compute for each region:
-        gain (noradrenaline: how excitable the neurons are) and ach (acetylcholine: how strongly to write memory)."""
-        decay = self.nm.decay
-        normalizer = (1 - decay ** (t + 1)) / (1 - decay)  # sum of the averaging weights so far
-        z = 2 * torch.sigmoid(self.nm.proj(self.nm.norm(m / normalizer[..., None])))
-        z = z.view(*m.shape[:-1], self.n_regions, 1 + self.n_heads)
-        return z[..., :1], z[..., 1:]                      # gain [..., L, 1], ach [..., L, heads]
-
-    def step(self, x, state, done):
-        keep = 1 - done
-        S = state["S"] * keep[None, :, None, None, None]
-        m, t = state["m"] * keep[:, None], state["t"] * keep
-        x = self.inp(x)
-        m = self.nm.decay * m + x
-        gain, ach = self.neuromodulator_signals(m, t)
-        h, new_S = x[:, None], []                          # [N, 1, d]: a sequence of length 1
-        for l, region in enumerate(self.regions):
-            h, S_l = region.step(h, gain[:, None, l], ach[:, None, l], None, S[l])
-            new_S.append(S_l)
-        self.rates.append(torch.stack([region.l5.last_rate for region in self.regions]))
-        return h[:, 0], {"S": torch.stack(new_S), "m": m, "t": t + 1}
-
-    def seq(self, x, state, done):
-        """
-        A whole segment of T steps at once (parallel over time). Same result as calling step() T times,
-        but much faster for training. x [T, N, F]; done [T, N] (1 = this step starts a new episode).
-
-        The Hebbian memory has a closed form. Inside one episode, the output at step i is
-            o_i = sum_{j<=i} lam^(i-j) * w_j * (q_i . k_j) * v_j   +   lam^(i+1) * S0 q_i
-        where the second term (the memory carried in from before the segment) only counts
-        while no episode boundary has happened yet.
-        """
-        T, N = done.shape
-        x = self.inp(x)                                                       # [T, N, d]
-
-        # Neuromodulators: a cheap running average, computed step by step
-        m, t, all_m, all_t = state["m"], state["t"], [], []
-        for i in range(T):
-            keep = 1 - done[i]
-            m = self.nm.decay * m * keep[:, None] + x[i]
-            t = t * keep
-            all_m.append(m); all_t.append(t)
-            t = t + 1
-        all_m, all_t = torch.stack(all_m), torch.stack(all_t)                 # [T, N, d], [T, N]
-        gain, ach = self.neuromodulator_signals(all_m, all_t)                # [T, N, L, .]
-        gain, ach = gain.transpose(0, 1), ach.transpose(0, 1)                # [N, T, L, .]
-
-        # Episode bookkeeping
-        episode_id = done.transpose(0, 1).cumsum(1)                          # [N, T] resets seen up to step t
-        same_episode = episode_id[:, :, None] == episode_id[:, None, :]      # [N, T, T] steps i and j in one episode
-        before_first_reset = episode_id == 0                                 # [N, T] still sees the carried-in memory
-        in_last_episode = episode_id == episode_id[:, -1:]                   # [N, T] writes into the final memory
-        steps = torch.arange(T, device=x.device)
-        distance = (steps[:, None] - steps[None, :]).float()                 # [T, T] i - j
-
-        h, new_S, rates = x.transpose(0, 1), [], []                          # h [N, T, d]
-        for l, region in enumerate(self.regions):
-            memory = region.l23                                               # HebbianSTDP of this region
-            x_in = region.l4a(h)
-            q, k, v, w = memory._proj(x_in, ach[:, :, l])                    # q,k,v [N,T,heads,dh]; w [N,T,heads]
-            log_lam = torch.log(memory.lam())                                 # [heads] per-head decay
-
-            # Within the segment: causal STDP window lam^(i-j), limited to the same episode
-            window = torch.where(distance >= 0, torch.exp(log_lam[:, None, None] * distance.clamp(min=0)),
-                                 torch.zeros((), device=x.device))            # [heads, T, T]
-            window = window[None] * same_episode[:, None]                     # [N, heads, T, T]
-            scores = torch.einsum("bihd,bjhd->bhij", q, k) * window * w.permute(0, 2, 1)[:, :, None, :]
-            out = torch.einsum("bhij,bjhd->bihd", scores, v)
-
-            # Memory carried in from before the segment, read with decay lam^(i+1)
-            S0 = state["S"][l]                                                # [N, heads, dh, dh]
-            decay_in = torch.exp(log_lam[None, :] * (steps[:, None] + 1).float())                 # [T, heads]
-            out = out + torch.einsum("bhde,bihe->bihd", S0, q) * (decay_in[None, :, :, None] * before_first_reset[:, :, None, None])
-
-            # Memory left at the end of the segment (only steps of the last episode write into it)
-            decay_out = torch.exp(log_lam[None, :] * (T - 1 - steps)[:, None].float())            # [T, heads]
-            weighted_v = v * (w * decay_out[None] * in_last_episode[:, :, None])[..., None]
-            S_end = (torch.exp(log_lam * T)[None, :, None, None] * S0 * (episode_id[:, -1] == 0)[:, None, None, None]
-                     + torch.einsum("bjhd,bjhe->bhde", weighted_v, k))
-
-            # The rest of the region: memory output, then the spiking dendritic layer (L5)
-            h = h + memory._finish(x_in, out)
-            h = h + region.l5(region.l4b(h), gain[:, :, l])
-            new_S.append(S_end)
-            rates.append(region.l5.last_rate)
-        self.rates.append(torch.stack(rates))
-        return h.transpose(0, 1), {"S": torch.stack(new_S), "m": all_m[-1], "t": all_t[-1] + 1}
 
 
 CORES = {"dendra": DendraCore, "lstm": LSTMCore, "mlp": MLPCore}
@@ -494,8 +374,8 @@ def ppo_update(agent, optimizer, buf, advantages, returns, start_state, clip_coe
         for b in range(args.minibatches):
             idx = order[b * envs_per_batch:(b + 1) * envs_per_batch].to(DEVICE)
             batch_state = {key: (value[:, idx] if key == "S" else value[idx]) for key, value in start_state.items()}
-            if hasattr(agent.core, "rates"):
-                agent.core.rates.clear()
+            if args.core == "dendra":
+                agent.core.clear_rates()
             dist, values, _ = agent.seq(buf["obs"][:, idx], batch_state, buf["dones"][:, idx])
 
             logp, entropy = dist.log_prob(buf["actions"][:, idx]), dist.entropy()
@@ -508,8 +388,7 @@ def ppo_update(agent, optimizer, buf, advantages, returns, start_state, clip_coe
             value_loss = 0.5 * ((values - returns[:, idx]) ** 2).mean()
             loss = policy_loss + 0.5 * value_loss - ent_coef * entropy.mean()
             if args.core == "dendra":                        # homeostasis: keep firing rates near 15%
-                rates = torch.stack(agent.core.rates).mean(0)
-                loss = loss + ((rates - 0.15) ** 2).sum()
+                loss = loss + agent.core.homeostasis_loss(0.15)
 
             optimizer.zero_grad()
             loss.backward()
@@ -558,8 +437,8 @@ def main():
         start_state = clone_state(state)                       # memory at the start of this segment
         with torch.no_grad():
             buf, obs, done, state, global_step = collect_rollout(agent, envs, obs, done, state, tracker, reward_fn, global_step)
-            if hasattr(agent.core, "rates"):
-                agent.core.rates.clear()
+            if args.core == "dendra":
+                agent.core.clear_rates()
             _, next_value, _ = agent.step(obs, clone_state(state), done)
             advantages, returns = compute_advantages(buf, next_value, done, gamma, gae_lambda)
         ppo_update(agent, optimizer, buf, advantages, returns, start_state, clip_coef, ent_coef)
