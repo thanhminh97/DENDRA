@@ -15,7 +15,7 @@
 >
 > At 16M parameters on Vietnamese TinyStories (BPE tokenizer), both models tell coherent stories, but GPT reaches a lower perplexity after the same 4,000 steps: 6.8 versus 7.6. With CUDA Graphs and `torch.compile`, DENDRA generates text 4–6x faster and trains 1.6x faster than the naive implementation.
 >
-> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. With continuous actions (Pendulum with hidden velocity), it does not yet beat simple networks.
+> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. With continuous actions (Pendulum with hidden velocity), it does not yet beat simple networks. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory.
 
 ---
 
@@ -438,6 +438,46 @@ Section 6 of the notebook compares the three modes (original / fast / fast + com
     - DENDRA and LSTM have not converged after 500,000 steps. DENDRA varies strongly between seeds (−441 and −991): with continuous actions it is less stable.
 - **Real Atari (ALE) and MuJoCo:** too heavy for a CPU. The pipeline has been smoke-tested on `atari:Breakout` and `mujoco:HalfCheetah-v5-pomdp`; the notebook `experiments/notebooks/rl_kaggle.ipynb` runs both in full on a Kaggle GPU.
 
+### 4.10. Learning without backpropagation: a three-factor (dopamine) rule
+
+**Question.** Sections 4.8–4.9 train DENDRA with backpropagation plus an RL algorithm (A2C/PPO). The brain has no backpropagation. Its synapses are thought to change by a *three-factor rule*: pre-synaptic activity × post-synaptic activity × a dopamine signal that says whether things went better or worse than expected. Can DENDRA learn from reward this way?
+
+**Learning rule** (`experiments/rl/three_factor.py`), applied after every step:
+
+```math
+\Delta w = \eta\,\delta_t\,e_t,\qquad \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t),\qquad e_t = \text{pre-synaptic activity} \times \text{post-synaptic error}
+```
+
+- **δ is the dopamine:** one number per agent (the reward prediction error), broadcast to every synapse.
+- **Output synapses (policy and value readouts):** the post-synaptic error is `onehot(a) − π` for the policy and 1 for the value. Here the rule is exactly the policy gradient.
+- **Hidden synapses:** each block (the encoder, the input synapses, each cortical region) gets the policy error through a **fixed random** feedback matrix (feedback alignment), so no learning signal crosses regions or time [12].
+  - Within one region (L4 → L2/3 → L5 and its 4 spike ticks) the eligibility is still computed with autograd.
+  - The neuromodulator weights stay fixed at their initial values.
+
+**Setup.**
+- **Agent:** the same agent in every run, `dendra.rl.DendraAgent` (2 regions, d = 128).
+- **Training:** CartPole-v1, 8 environments, 100k environment steps, 3 seeds.
+- **Score:** mean return of the last 50 episodes. Random play scores about 22 and the maximum is 500.
+- **Tuning:** every method was given 3–4 learning-rate settings. The best setting on CartPole was then reused unchanged on CartPole with the velocities hidden, where the agent must infer the velocities from memory.
+
+| Method | What changes the weights | CartPole | Velocities hidden |
+| --- | --- | ---: | ---: |
+| Backprop: A2C + BPTT (reference) | exact gradients, through 32-step segments | 129 ± 27 | **44 ± 3** |
+| Backprop, online (control) | exact gradients, one step at a time, same schedule as the three-factor rules | **313 ± 147** | 19 ± 7 |
+| Three-factor, output synapses only | dopamine × local eligibility; the DENDRA network stays random | 180 ± 10 | 15 ± 3 |
+| **Three-factor, all synapses (e-prop-like)** | dopamine × local eligibility × random feedback; **no backpropagation** | **295 ± 97** | 11 ± 2 |
+
+![Three-factor learning](figures/rl_three_factor.png)
+
+**What we see**
+- **DENDRA can learn CartPole without backpropagation.** With the dopamine rule on all synapses it reaches 295, about the same as exact gradients on the same schedule (313). Both differences fall inside the spread between seeds. On this task, replacing backprop with dopamine and random feedback costs little.
+- **Plasticity in the hidden synapses helps:** 295 versus 180 when only the output synapses learn. This works only if the hidden synapses learn **30x more slowly** than the output synapses. At equal speed the policy collapses into always pushing the same way (about 9 points). The same happens with exact gradients (hidden ×1: 60).
+- **The A2C reference scores lowest on CartPole, but that is not because backprop is worse.** The online methods update after every step, 32x more often, and this A2C is deliberately minimal: no entropy bonus and no advantage normalization. The online-backprop control shows that the schedule, not the learning rule, makes the difference.
+- **When memory is needed, the three-factor rule fails.** With the velocities hidden, only A2C with BPTT learns anything (44). Every method without credit assignment through time stays near or below random play, *including exact backprop applied online*. So the dopamine rule itself is not the problem. The missing piece is knowing that what was written into memory several steps ago turned out to be useful. DENDRA's Hebbian synapses still store the past, but nothing teaches the network what is worth storing.
+- **Next step, closer to biology:** eligibility traces that follow each synapse's state *through time* (full e-prop [11]), so a delayed dopamine signal can still credit the memory writes that caused it.
+
+Limitations: only 3 seeds and a simple task, with high variance between seeds. The learning rates were chosen on the same seeds that are reported; this was done in the same way for every method.
+
 ## 5. Discussion
 
 **Strengths**
@@ -473,7 +513,7 @@ Section 6 of the notebook compares the three modes (original / fast / fast + com
 1. **Delta rule (LTD)** for L2/3: `S ← λS(I − w k kᵀ) + w v kᵀ`, overwriting instead of accumulating, following Gated DeltaNet [5].
 2. **Hippocampus:** an episodic memory stored every theta cycle, plus a "sleep" phase that distills it into the slow weights for continual learning.
 3. **Cortical columns as MoE:** K columns per region; the inhibitory population picks the k winning columns; homeostasis replaces the load-balancing loss.
-4. **Dopamine and serotonin:** an RPE that drives both the slow weights (RL) and the fast-weight write gate; an adaptive number of feedback passes.
+4. **Dopamine and serotonin:** an RPE that drives both the slow weights (RL) and the fast-weight write gate; an adaptive number of feedback passes. Section 4.10 shows that a dopamine rule can replace backprop on a memoryless task; full e-prop eligibility traces through time are needed for tasks with memory.
 5. **Fused GPU kernels:** CUDA Graphs and `torch.compile` are done (section 4.7). The next step is a single Triton kernel for the whole E/I microcircuit over T ticks. For an even lighter model (requires retraining): reduce T from 4 to 2, or reduce the number of dendritic branches or E neurons.
 6. **Scaling up** to 125M and then 1B parameters, with several seeds, against GPT, Mamba2 and Gated DeltaNet at equal budget.
 
@@ -513,6 +553,15 @@ for env in minatar:breakout pendulum-pomdp; do for core in mlp lstm dendra; do f
          --out runs/ppo_$(echo $env | tr ':' '_')_${core}_s${s}.json
 done; done; done
 python experiments/rl/plot_ppo.py runs
+
+# Section 4.10: learning without backpropagation (CPU, 1–3 minutes per run)
+for s in 0 1 2; do for task in cartpole cartpole-pomdp; do
+  python experiments/rl/three_factor.py --method backprop        --lr 3e-4                 --task $task --seed $s --out runs/tf/${task}_backprop_s$s.json
+  python experiments/rl/three_factor.py --method online_backprop --lr 3e-4 --hidden_mult 0.1  --task $task --seed $s --out runs/tf/${task}_online_s$s.json
+  python experiments/rl/three_factor.py --method readout         --lr 1e-3                 --task $task --seed $s --out runs/tf/${task}_readout_s$s.json
+  python experiments/rl/three_factor.py --method eprop           --lr 1e-3 --hidden_mult 0.03 --task $task --seed $s --out runs/tf/${task}_eprop_s$s.json
+done; done
+python experiments/rl/plot_three_factor.py runs/tf
 # Real Atari / MuJoCo (a GPU is recommended): --env atari:Breakout  or  --env mujoco:HalfCheetah-v5-pomdp
 ```
 
@@ -650,15 +699,18 @@ The repository has two parts: `dendra/` is the model itself and contains only DE
 │   ├── rl/                           reinforcement learning
 │   │   ├── bandit.py                 meta-RL on bandits: DENDRA, GPT, LSTM (section 4.8)
 │   │   ├── ppo.py                    recurrent PPO, Atari/MuJoCo: DENDRA vs LSTM vs memoryless (section 4.9)
+│   │   ├── three_factor.py           learning without backprop: dopamine three-factor rule (section 4.10)
 │   │   ├── plot_bandit.py
-│   │   └── plot_ppo.py
+│   │   ├── plot_ppo.py
+│   │   └── plot_three_factor.py
 │   ├── notebooks/                    Kaggle notebooks (GPU)
 │   │   ├── language_kaggle.ipynb     language modeling on Vietnamese TinyStories, DENDRA vs GPT
 │   │   └── rl_kaggle.ipynb           reinforcement learning on Atari + MuJoCo
 │   ├── results/                      JSON results behind every table
 │   │   ├── language/
 │   │   ├── rl_bandit/
-│   │   └── rl_ppo/
+│   │   ├── rl_ppo/
+│   │   └── rl_three_factor/
 │   └── make_figures.py               draws the language-modeling figures
 └── figures/                          figures used in this README
 ```
@@ -689,3 +741,5 @@ The name also echoes *dendrite*, the branch of a neuron that gathers its inputs.
 8. Horowitz, M. *Computing's Energy Problem (and What We Can Do About It).* ISSCC, 2014.
 9. Karpathy, A. *Tiny Shakespeare* (char-rnn). <https://github.com/karpathy/char-rnn>
 10. nampdn-ai. *tinystories-vietnamese* (Hugging Face dataset, MIT). <https://huggingface.co/datasets/nampdn-ai/tinystories-vietnamese>
+11. Bellec, G., Scherr, F., Subramoney, A., Hajek, E., Salaj, D., Legenstein, R., Maass, W. *A solution to the learning dilemma for recurrent networks of spiking neurons.* Nature Communications 11, 3625, 2020. <https://doi.org/10.1038/s41467-020-17236-y>
+12. Lillicrap, T. P., Cownden, D., Tweed, D. B., Akerman, C. J. *Random synaptic feedback weights support error backpropagation for deep learning.* Nature Communications 7, 13276, 2016. <https://doi.org/10.1038/ncomms13276>
