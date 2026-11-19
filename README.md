@@ -126,13 +126,19 @@ The residual stream carries continuous values. It plays the role of *electrical 
 
 Each excitatory neuron has B = 4 dendritic branches. Each branch receives its own input and passes it through a local nonlinearity (a "dendritic spike") before summing at the soma:
 
-$$c_b = W_b\,x,\qquad I = g_{NE}\sum_{b=1}^{B} a_b\,\mathrm{SiLU}(c_b),\qquad a_b \ge 0$$
+```math
+c_b = W_b\,x,\qquad I = g_{NE}\sum_{b=1}^{B} a_b\,\mathrm{SiLU}(c_b),\qquad a_b \ge 0
+```
 
 The soma integrates over T = 4 gamma ticks per token, with a leaky potential, inhibition from the I population and an adaptive threshold:
 
-$$u_t = \beta\,u_{t-1} + I - W_{IE}\,s^{I}_{t-1},\qquad s_t = H\!\left(u_t - \theta - \alpha_t\right)$$
+```math
+u_t = \beta\,u_{t-1} + I - W_{IE}\,s^{I}_{t-1},\qquad s_t = H\!\left(u_t - \theta - \alpha_t\right)
+```
 
-$$u_t \leftarrow u_t - \theta\,s_t,\qquad \alpha_t = \rho\,\alpha_{t-1} + \gamma\,s_t,\qquad r = \tfrac{1}{T}\textstyle\sum_t s_t$$
+```math
+u_t \leftarrow u_t - \theta\,s_t,\qquad \alpha_t = \rho\,\alpha_{t-1} + \gamma\,s_t,\qquad r = \tfrac{1}{T}\textstyle\sum_t s_t
+```
 
 Where:
 - `H` is the step function: a spike is always 1; stronger input only produces *more* spikes.
@@ -162,11 +168,15 @@ flowchart LR
 
 Instead of storing every past token, each head keeps a fast synaptic matrix `S` and updates it with Hebb's rule:
 
-$$S_t = \lambda_h\,S_{t-1} + w_t\,v_t k_t^{\top},\qquad o_t = S_t\,q_t,\qquad w_t = \sigma(W_{\mathrm{NMDA}}\,x_t)\cdot \mathrm{ACh}_t$$
+```math
+S_t = \lambda_h\,S_{t-1} + w_t\,v_t k_t^{\top},\qquad o_t = S_t\,q_t,\qquad w_t = \sigma(W_{\mathrm{NMDA}}\,x_t)\cdot \mathrm{ACh}_t
+```
 
 Written for the whole sequence, this becomes:
 
-$$o_i = \sum_{j\le i} \lambda_h^{\,i-j}\; w_j\,(q_i\cdot k_j)\; v_j$$
+```math
+o_i = \sum_{j\le i} \lambda_h^{\,i-j}\; w_j\,(q_i\cdot k_j)\; v_j
+```
 
 - **Hebb:** the outer product `v·kᵀ` strengthens the synapse between the presynaptic (`k`) and postsynaptic (`v`) signals.
 - **STDP:** the factor `λ^(i−j)` exists only for `j ≤ i` and decays with distance. It is a causal STDP window: it masks the future and encodes relative position, so no position embedding is needed.
@@ -179,7 +189,9 @@ Mathematically this is *linear attention with decay* (the same family as RetNet,
 
 A small "brainstem" module computes a baseline level of the context, a causal moving average of the embeddings, and emits a signal for each region:
 
-$$m_t = \mathrm{EMA}_{0.9}(x_{\le t}),\qquad [\,g_{NE},\ \mathrm{ACh}\,] = 2\,\sigma(W m_t)$$
+```math
+m_t = \mathrm{EMA}_{0.9}(x_{\le t}),\qquad [\,g_{NE},\ \mathrm{ACh}\,] = 2\,\sigma(W m_t)
+```
 
 - **Noradrenaline (`g_NE`):** multiplies the input current of every L5 neuron, i.e. sets the sensitivity of the region.
 - **Acetylcholine (`ACh`):** multiplies the write gate of each head, i.e. sets how much is remembered.
@@ -193,7 +205,9 @@ $$m_t = \mathrm{EMA}_{0.9}(x_{\le t}),\qquad [\,g_{NE},\ \mathrm{ACh}\,] = 2\,\s
 
 ### 3.8. Loss function
 
-$$\mathcal{L} = \mathcal{L}_{CE} + 0.3\,\mathcal{L}_{CE}^{\,reflex} + \sum_{l}\big(\bar r_l - r^{*}\big)^2,\qquad r^{*} = 0.15$$
+```math
+\mathcal{L} = \mathcal{L}_{CE} + 0.3\,\mathcal{L}_{CE}^{\,reflex} + \sum_{l}\big(\bar r_l - r^{*}\big)^2,\qquad r^{*} = 0.15
+```
 
 The last term is **homeostasis**: it keeps the mean firing rate of each region near 15%, like the Na⁺/K⁺ pump keeping neurons ready to fire.
 
