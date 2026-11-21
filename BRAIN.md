@@ -11,6 +11,8 @@ We compare it with PPO, using an MLP (with frame stacking when velocities are hi
 - **At 300k steps:** PPO-MLP catches up or overtakes. DENDRA-Brain's advantage is speed of learning, not final performance.
 - **Weaknesses:** high variance between seeds, some degradation late in training, and so far only low-dimensional sensors (no vision).
 
+**Part II** adds a visual cortex, hippocampal long-term memory and planning, and tests the agent on Atari. There it does **not** learn: it stays near random play and below PPO-CNN once PPO has enough data. Section 9 explains why.
+
 ---
 
 ## 1. Why a new design
@@ -134,7 +136,7 @@ Final return / mean return over the whole run:
 **Not shown (yet), and needed before claiming "better than current RL":**
 - **Stronger baselines.** PPO is not the most sample-efficient modern method. DQN/Rainbow (discrete) and SAC (continuous), which use replay buffers, learn these tasks much faster than PPO. They are the real bar for sample efficiency.
 - **Stability and final performance.** The variance between seeds is high, and on several tasks performance peaks and then declines (figure in 3.1). Synaptic consolidation (metaplasticity, option `consolidation`) did not fix this.
-- **Complex, natural environments.** All tasks here have 2–6 sensor values. Place cells over raw pixels would not work. Vision needs a hierarchical visual cortex whose features are learned without reward, for example by local predictive or Hebbian learning, feeding the same columns and striatum.
+- **Complex, natural environments.** All tasks here have 2–6 sensor values. Part II tries pixels (Atari) with a visual cortex learned by local Hebbian rules, and fails.
 - **What natural environments additionally need:**
   - a world model for planning (hippocampal replay / prefrontal simulation);
   - memory beyond a few seconds;
@@ -192,3 +194,115 @@ Code: `dendra/brain.py` (the agent), `experiments/rl/run_brain.py`, `experiments
 - Sutton, R. S. *Generalization in reinforcement learning: successful examples using sparse coarse coding.* NeurIPS 1996.
 - Tobler, P. N., Fiorillo, C. D., Schultz, W. *Adaptive coding of reward value by dopamine neurons.* Science 307, 2005.
 - Yagishita, S. et al. *A critical time window for dopamine actions on the structural plasticity of dendritic spines.* Science 345, 2014.
+
+---
+
+# Part II. Vision, long-term memory and planning: Atari
+
+**Goal.** Extend DENDRA-Brain to learn from raw pixels, still online and with local rules only, by adding three systems:
+1. a multi-layer visual cortex that learns its own features without reward;
+2. a hippocampal long-term (episodic) memory;
+3. a world model used for planning.
+
+Test it on real Atari games.
+
+**Result in short: it does not work yet.**
+- At 100k steps, both DENDRA-Brain and PPO-CNN stay near random play on Breakout, Boxing and Freeway.
+- With 5x more data (Breakout, 500k steps), PPO starts to learn (9.3) and DENDRA-Brain does not (1.6).
+- Published sample-efficient deep-RL methods reach 13–38 on these games at 100k steps.
+
+The sections below describe the design, the numbers, and the most likely reason for the failure.
+
+## 7. Architecture (`dendra/vision.py`, `dendra/visual_brain.py`)
+
+```text
+frame ─► retina ─► V1 ─► V1 complex ─► V2 ─► V2 complex ─┬─► dendritic conjunctions ─┐
+         (light +   (simple  (2x2 pool)  (3x3   (2x2 pool)  │   (pairs of moving        ├─► striatum Q(s,a) ─┐
+          motion)    cells)               of V1)            │    features, by relative  │   Sarsa(λ), tags   │
+                                                            │    position)             ─┘                    ├─► action
+                                                            ├─► hippocampus: episodic memory of returns ─────┤
+                                                            │      (kNN recall = pattern completion)         │
+                                                            └─► hippocampal map of transitions ─► planning by prioritized replay ─► striatum
+```
+
+| System | Brain mechanism | Implementation | Learning |
+| --- | --- | --- | --- |
+| Retina | luminance and transient (motion) cells | 84×84 grayscale + difference to the previous frame | none |
+| V1 | simple cells, lateral inhibition | 64 cell types on 8×8 patches (stride 4); per location only the best-matching cell fires, if the patch has contrast | competitive Hebbian rule with a homeostatic "conscience"; **critical period**: plasticity fades to 0 over the first 3,000 steps |
+| V1 complex, V2, V2 complex | complex cells (position tolerance); V2 conjunctions | 2×2 max-pool; 128 V2 types on 3×3 arrangements of V1 features; 2×2 max-pool | same rule |
+| Habituation | sensory adaptation | features that are almost always on (walls, bricks) stop driving the conjunctions | running average |
+| Dendritic conjunctions | coincidence detection on dendritic branches | pairs of non-habituated V1 features coded by (type, type, relative offset), e.g. "ball two cells left of paddle"; the idea follows Blob-PROST features (Liang et al., 2016) | none (fixed) |
+| Striatum | dopamine-gated corticostriatal plasticity | linear Q over about 200–400 active features | Sarsa(λ) with **replacing** eligibility tags kept for 10 steps; adaptive dopamine coding |
+| Hippocampus: long-term memory | episodic memory, pattern completion | per action, up to 20k memories (random-projection key → discounted return); recall = the k = 7 most similar | write at the end of each episode, keeping the best return per key (episodic control; Blundell et al., 2016) |
+| Hippocampus: world model and planning | replay prioritized by expected benefit (Mattar & Daw, 2018) | memory of experienced transitions; each step replays 4 transitions per environment, chosen in proportion to surprise \|δ\| | Q-learning backup with a bounded δ |
+
+There is no backpropagation anywhere. The one non-biological shortcut is weight sharing: the same V1/V2 cell types at every location stand for many columns of the same type.
+
+**Problems found and fixed during development:**
+- **The visual code drifted.** Cells kept changing what they responded to, so the striatum's weights lost their meaning. Fixed by a critical period, and by letting the homeostatic bias choose only which cell *learns*, not which one *fires*.
+- **The eligibility tags were unstable.** Consecutive frames share most features, so accumulating tags moved each value about 5x per step and the weights diverged to NaN. Fixed by replacing tags (a synapse holds only its most recent tag).
+- **Planning diverged.** Replayed `max` backups with function approximation are the classic "deadly triad". Fixed by a smaller replay learning rate and a bounded replayed δ.
+
+## 8. Experiments on Atari
+
+**Protocol.**
+- **Environments:** ALE v5 (sticky actions), 84×84 grayscale, frame skip 4, 8 environments in parallel.
+- **Budget:** 100k environment steps (the "Atari 100k" budget).
+- **Score:** mean return of the last 20 training episodes. Seeds 10–12; development used seed 0 only.
+- **DENDRA-Brain:** all modules on, as decided before the runs.
+- **PPO-CNN:** the standard Atari network with 4 stacked frames and standard hyperparameters.
+- **Hardware:** both on one CPU core.
+
+| Game | Random | PPO-CNN | **DENDRA-Brain** | Published at 100k: SPR / Rainbow (enh.) | Human |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Breakout | 1.7 | 2.0 ± 0.3 | 2.4 ± 0.4 | 13 / 14 | 30.5 |
+| Boxing | 0.1 | 0.7 ± 1.0 | −0.3 ± 0.1 | 38 / 28 | 12.1 |
+| Freeway | 0.0 | 6.9 ± 9.6 (seeds: 20.4, 0.2, 0.0) | 0.0 ± 0.0 | 21 / 6 | 29.6 |
+
+Sources for the reference rows:
+- **Random and human scores:** the Atari-5 paper (Aitchison et al., 2022).
+- **SPR and Rainbow (enhanced):** the Atari-100k table in arXiv:2606.21297.
+
+These published methods use deep networks trained by backpropagation, replay with many updates per step, and GPUs. They are also evaluated with separate test episodes, so their numbers are only a rough yardstick.
+
+![Atari, 100k steps](figures/brain_atari.png)
+
+**Longer run, Breakout, 500k steps (1 seed):** PPO-CNN **9.3**, DENDRA-Brain **1.6**. PPO starts to learn at about 300k steps; DENDRA-Brain shows no learning trend.
+
+![Breakout, 500k steps](figures/brain_atari_500k.png)
+
+**Ablations.** These were planned (removing planning, hippocampal memory or conjunctions) but stopped after one game and one seed. With the full agent at random level they could not tell anything (Breakout, seed 10: without planning 0.9, without memory 1.25, without conjunctions 2.2, full agent 2.0; a single seed at this noise level does not separate them). The compute went to the 500k-step run instead.
+
+**Speed:** DENDRA-Brain runs at 260–340 steps/s on one CPU core, versus about 200 for PPO-CNN.
+
+## 9. Why it fails, and what that teaches
+
+1. **Representation without credit.**
+   - On the low-dimensional tasks of Part I, a code built without reward was enough, because the right variables (angles, velocities) were already the inputs.
+   - From pixels, the relevant variables (where the ball is relative to the paddle, whether the ball is in play) are a tiny part of what V1/V2 encode. A linear readout over a few hundred unsupervised features has to find them by trial and error.
+   - PPO's CNN learns *task-relevant* features because the reward signal reaches the visual layers through backpropagation. **Local rules alone gave the visual cortex no signal about what matters.**
+   - The brain is thought to solve this with signals that do reach sensory cortex: attention and top-down feedback, dopamine and acetylcholine acting on cortical plasticity, and prediction errors (predictive coding). None of these is in this version.
+2. **A concrete failure symptom.** In the 500k run, DENDRA-Brain's episodes were about 4.6x longer than PPO's (373 versus 1,733 episodes in the same number of steps). After losing a life it often does not press FIRE, so the ball stays out of play. Linking "no ball" to "FIRE pays off later" needs credit over long delays, and the 10-step tags do not reach that far.
+3. **Exploration.** Freeway needs the chicken to keep moving up for about 2,000 steps before any reward. A softmax over noisy values never gets there. One PPO seed found it (20.4); DENDRA-Brain never did. The action-novelty bonus of Part I is not in the visual agent, and count-based novelty over a high-dimensional visual code is an open design question.
+4. **Planning and memory cannot help without a good code.** Episodic memory and replay propagate value efficiently *along the features they are given*. With a code that does not separate the situations that matter, they mostly add noise.
+
+**Next steps suggested by this result:**
+- **Learn visual features from prediction:** cortex trained, still locally, to predict the next frame and the reward (predictive coding, a world model in feature space). This is how sample-efficient deep-RL methods such as SPR and DreamerV3 shape their features.
+- **Top-down, dopamine-gated plasticity in V2:** features that carry reward information become more stable or more numerous.
+- **Credit over longer delays:** longer eligibility tags for the striatum, and slower time cells in the visual context.
+- **Novelty-driven exploration in visual space.**
+
+## 10. Reproducing Part II
+
+```bash
+python experiments/rl/run_visual_brain.py --game Breakout --steps 100000 --seed 10 --set episodic=1.0 planning=4 --out runs/atari/full_Breakout_s10.json
+python experiments/rl/ppo.py --env atari:Breakout --core mlp --total 100000 --seed 10 --device cpu --out runs/atari/ppo_Breakout_s10.json
+python experiments/rl/plot_atari.py experiments/results/brain_atari/main_100k figures/brain_atari.png
+```
+
+Additional references (Part II):
+- Aitchison, M., Sweetser, P., Hutter, M. *Atari-5: Distilling the Arcade Learning Environment down to five games.* arXiv:2210.02019, 2022.
+- Blundell, C. et al. *Model-free episodic control.* arXiv:1606.04460, 2016.
+- Liang, Y., Machado, M. C., Talvitie, E., Bowling, M. *State of the art control of Atari games using shallow reinforcement learning.* AAMAS 2016.
+- Mattar, M. G., Daw, N. D. *Prioritized memory access explains planning and hippocampal replay.* Nature Neuroscience 21, 2018.
+- Schwarzer, M. et al. *Data-efficient reinforcement learning with self-predictive representations (SPR).* ICLR 2021.
