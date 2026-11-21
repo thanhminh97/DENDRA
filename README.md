@@ -15,7 +15,7 @@
 >
 > At 16M parameters on Vietnamese TinyStories (BPE tokenizer), both models tell coherent stories, but GPT reaches a lower perplexity after the same 4,000 steps: 6.8 versus 7.6. With CUDA Graphs and `torch.compile`, DENDRA generates text 4–6x faster and trains 1.6x faster than the naive implementation.
 >
-> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. On the real Atari Breakout (Kaggle GPU, 2M steps, 1 seed) it ends slightly above the LSTM (≈ 37 vs ≈ 34). With continuous actions (Pendulum and MuJoCo HalfCheetah, both with hidden velocities) it does not yet beat simple networks: on HalfCheetah it reaches about half the LSTM's return. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory.
+> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. On the real Atari Breakout (Kaggle GPU, 2M steps, 1 seed) it ends slightly above the LSTM (≈ 37 vs ≈ 34). With continuous actions (Pendulum and MuJoCo HalfCheetah, both with hidden velocities) it does not yet beat simple networks: on HalfCheetah it reaches about half the LSTM's return. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory. A new, separate design for reinforcement learning, **DENDRA-Brain** ([BRAIN.md](BRAIN.md)), learns online with local rules only: no backpropagation, no PPO. In 100k steps it learns faster than PPO on six control tasks and ends best on five of them; with 3x more data PPO catches up.
 
 ---
 
@@ -502,6 +502,33 @@ All three runs of each environment trained at the same time on the two GPUs. The
 
 Limitations: only 3 seeds and a simple task, with high variance between seeds. The learning rates were chosen on the same seeds that are reported; this was done in the same way for every method.
 
+### 4.11. DENDRA-Brain: a new design for reinforcement learning
+
+Sections 4.8–4.10 point to the limits of DENDRA as an RL network. It is trained by backpropagation plus PPO, it is weak on continuous control, and without backpropagation it cannot learn what to remember. **DENDRA-Brain** ([BRAIN.md](BRAIN.md), `dendra/brain.py`) is a separate design built only for reinforcement learning. It learns online, after every step, with local rules only: no backpropagation, no replay buffer, no PPO.
+- **Memory:** a fixed temporal context ("time cells") supplies the recent past.
+- **Cortex:** many small cortical columns form a sparse place-cell code.
+- **Action:** a striatum of action channels learns from a dopamine prediction error through synaptic eligibility tags.
+
+With 100k environment steps and 3 held-out seeds, against PPO (MLP and LSTM):
+
+| Task | PPO-MLP | PPO-LSTM | **DENDRA-Brain** |
+| --- | ---: | ---: | ---: |
+| CartPole | 317 | 76 | **357** |
+| CartPole, velocities hidden | 38 | 23 | **91** |
+| Acrobot | −95 | −500 | **−90** |
+| MountainCar (sparse reward) | −200 (never solved) | −200 (never solved) | **−161** |
+| Pendulum (continuous) | −983 | **−500** | −603 |
+| Pendulum, velocity hidden (continuous) | −933 | −966 | **−521** |
+
+- **At 100k steps:** DENDRA-Brain learns several times faster and ends best on 5 of 6 tasks.
+- **At 300k steps:** PPO-MLP catches up or overtakes.
+- **Not yet shown:**
+  - comparisons with replay-based methods (DQN, SAC);
+  - stability across seeds;
+  - learning from raw pixels.
+
+See [BRAIN.md](BRAIN.md) for the architecture, ablations and limitations.
+
 ## 5. Discussion
 
 **Strengths**
@@ -706,11 +733,13 @@ The repository has two parts: `dendra/` is the model itself and contains only DE
 ```text
 .
 ├── README.md                         this document
+├── BRAIN.md                          DENDRA-Brain: the reinforcement-learning design and its results
 ├── requirements.txt
 ├── dendra/                           the DENDRA model (nothing else)
 │   ├── model.py                      building blocks + DENDRA, with 3 modes: forward / prefill / step_token
 │   ├── fast.py                       fast decoder: static state + CUDA Graph (+ torch.compile)
-│   └── rl.py                         reinforcement learning: DendraCore (memory) + DendraAgent (actor-critic)
+│   ├── rl.py                         reinforcement learning: DendraCore (memory) + DendraAgent (actor-critic)
+│   └── brain.py                      DENDRA-Brain: online RL agent with local, brain-like learning rules (BRAIN.md)
 ├── experiments/                      comparisons with other architectures
 │   ├── baselines/
 │   │   └── gpt.py                    GPT baseline (Transformer with KV cache) + its fast decoder
@@ -724,6 +753,10 @@ The repository has two parts: `dendra/` is the model itself and contains only DE
 │   │   ├── bandit.py                 meta-RL on bandits: DENDRA, GPT, LSTM (section 4.8)
 │   │   ├── ppo.py                    recurrent PPO, Atari/MuJoCo: DENDRA vs LSTM vs memoryless (section 4.9)
 │   │   ├── three_factor.py           learning without backprop: dopamine three-factor rule (section 4.10)
+│   │   ├── run_brain.py              trains DENDRA-Brain on one task (section 4.11, BRAIN.md)
+│   │   ├── envs.py                   classic-control tasks (with "-pomdp" variants) shared by run_brain.py and ppo.py
+│   │   ├── plot_brain.py             DENDRA-Brain vs PPO: table and learning curves
+│   │   ├── brain_ablations.py        ablation table for DENDRA-Brain
 │   │   ├── plot_bandit.py
 │   │   ├── plot_ppo.py
 │   │   └── plot_three_factor.py
@@ -734,7 +767,8 @@ The repository has two parts: `dendra/` is the model itself and contains only DE
 │   │   ├── language/
 │   │   ├── rl_bandit/
 │   │   ├── rl_ppo/
-│   │   └── rl_three_factor/
+│   │   ├── rl_three_factor/
+│   │   └── brain/                    main_100k/, long_300k/, ablations_100k/
 │   └── make_figures.py               draws the language-modeling figures
 └── figures/                          figures used in this README
 ```

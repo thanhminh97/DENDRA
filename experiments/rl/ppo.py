@@ -13,6 +13,8 @@ Environments (--env):
   minatar:breakout        miniature 10x10 Atari (MinAtar), fast on CPU
   pendulum-pomdp          Pendulum with the angular velocity HIDDEN, so it must be inferred from memory
   mujoco:HalfCheetah-v5   full MuJoCo; add the suffix "-pomdp" to keep positions only (velocities hidden)
+  classic:CartPole-v1     Gymnasium classic control (CartPole-v1, Acrobot-v1, MountainCar-v0, Pendulum-v1),
+                          "-pomdp" hides the velocities (see experiments/rl/envs.py)
 
 Example:
   python experiments/rl/ppo.py --env minatar:breakout --core dendra --total 300000 --out runs/ppo.json
@@ -39,6 +41,8 @@ import torch.nn.functional as F
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from dendra.rl import DendraCore, init_layer   # the DENDRA memory core (see dendra/rl.py)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from envs import make_classic                   # classic-control tasks shared with run_brain.py
 
 
 # ============================================================================ 1. Settings
@@ -63,8 +67,8 @@ np.random.seed(args.seed)
 torch.set_num_threads(int(os.environ.get("NT", "1")))   # several runs share the CPU, so one thread each by default
 
 DEVICE = torch.device(args.device)
-ENV_FAMILY = args.env.split(":")[0]                      # "atari", "minatar", "pendulum-pomdp" or "mujoco"
-CONTINUOUS = ENV_FAMILY in ("pendulum-pomdp", "mujoco")  # continuous actions -> Gaussian policy
+ENV_FAMILY = args.env.split(":")[0]                      # "atari", "minatar", "pendulum-pomdp", "mujoco" or "classic"
+CONTINUOUS = ENV_FAMILY in ("pendulum-pomdp", "mujoco") or (ENV_FAMILY == "classic" and "Pendulum" in args.env)
 
 
 # ============================================================================ 2. Environments
@@ -170,6 +174,9 @@ def make_vec_env(frame_stack):
     if ENV_FAMILY == "mujoco":
         name = args.env.split(":")[1]
         return GymVec([lambda: make_mujoco(name, frame_stack) for _ in range(n)], seed)
+    if ENV_FAMILY == "classic":
+        name = args.env.split(":")[1]
+        return GymVec([lambda: make_classic(name, frame_stack) for _ in range(n)], seed)
     raise ValueError(f"unknown environment: {args.env}")
 
 
@@ -400,7 +407,8 @@ def ppo_update(agent, optimizer, buf, advantages, returns, start_state, clip_coe
 def main():
     N, T = args.num_envs, args.num_steps
     # The memoryless agent gets the last 4 frames instead of a memory (MinAtar frames already show motion)
-    frame_stack = 4 if (args.core == "mlp" and ENV_FAMILY in ("atari", "pendulum-pomdp", "mujoco")) else 1
+    hidden_state = ENV_FAMILY in ("atari", "pendulum-pomdp", "mujoco") or args.env.endswith("-pomdp")
+    frame_stack = 4 if (args.core == "mlp" and hidden_state) else 1
     envs = make_vec_env(frame_stack)
     agent = Agent(envs.obs_shape, envs.n_actions).to(DEVICE)
     n_params = sum(p.numel() for p in agent.parameters())
