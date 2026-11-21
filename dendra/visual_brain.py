@@ -11,6 +11,9 @@ Every part learns online with local rules; there is no backpropagation anywhere.
                                                     └─► cerebellum: forward model of the next code and reward
                                                            planning = mental simulation that trains the striatum
     action = softmax over [striatum + hippocampus] values (arbitration)
+
+Defaults = "v2": actor-critic striatum + novelty dopamine, no hippocampus and no planning (these did not help
+on Atari; see BRAIN.md, Part II). v1 = actor_critic=False novelty=0 episodic=1.0 planning=4.
 """
 import math
 
@@ -148,11 +151,20 @@ class VisualBrainAgent:
     temperature      softmax temperature of the action choice
     conjunctions     use dendritic conjunction features
     episodic         weight of the hippocampal values in the choice (0 = no hippocampus)
+    planning         remembered transitions replayed per environment step (0 = no planning)
+    boredom          noradrenaline / adaptive gain: after this many steps without reward, the choice temperature
+                     has doubled, and it keeps rising (up to 20x) until a reward arrives (0 = off)
+    novelty          dopamine bonus for rarely seen visual features (0 = off)
+    actor_critic     True: ventral striatum = critic V(s), dorsal striatum = actor with action preferences
+                     (both learn from the same dopamine δ = r + γV(s') - V(s)); False: Sarsa action values
+    lr_actor         learning rate of the actor synapses (default: lr)
+    max_gap          synaptic saturation: an action's preference can fall at most this far below the best one,
+                     so every action keeps a small chance of being tried
     """
 
     def __init__(self, n_actions, n_envs=8, lr=0.1, gamma=0.99, lam=0.8, trace_len=10, temperature=0.05,
                  conjunctions=True, episodic=0.0, ec_capacity=20000, planning=0, plan_lr=None,
-                 critical_period=3000, seed=0):
+                 critical_period=3000, boredom=0, novelty=0.5, actor_critic=True, lr_actor=None, max_gap=4.0, seed=0):
         self.N, self.A = n_envs, n_actions
         self.lr, self.gamma, self.lam, self.trace_len, self.temperature = lr, gamma, lam, trace_len, temperature
         self.gen = torch.Generator().manual_seed(seed)
@@ -161,7 +173,11 @@ class VisualBrainAgent:
         self.habituation = Habituation(self.vision.v1_size)
         self.conj = DendriticConjunctions(self.vision.n_v1) if conjunctions else None
         n_total = self.vision.n_features + (self.conj.size if self.conj else 0)
-        self.w = torch.zeros(n_total, n_actions)                    # cortico-striatal synapses
+        self.w = torch.zeros(n_total, n_actions)                    # cortico-striatal synapses (Sarsa or actor)
+        self.actor_critic, self.max_gap = actor_critic, max_gap
+        self.lr_actor = lr if lr_actor is None else lr_actor
+        if actor_critic:
+            self.v = torch.zeros(n_total)                           # ventral striatum: state value (critic)
         self.dopamine = Dopamine(n_envs, gamma)
         self.history = [[] for _ in range(n_envs)]                  # recent (features, action) = eligibility tags
         self.episodic = episodic
@@ -169,6 +185,10 @@ class VisualBrainAgent:
             self.memory = EpisodicMemory(self.vision.n_features, n_actions, ec_capacity, seed=seed)
             self.episode = [[] for _ in range(n_envs)]              # (key, action, raw reward) of the running episode
         self.prev_q = None
+        self.boredom, self.drought = boredom, torch.zeros(n_envs)
+        self.novelty = novelty
+        if novelty > 0:
+            self.seen = torch.zeros(self.w.shape[0])                # how often each feature has fired
         self.planning = planning
         self.plan_lr = lr / 4 if plan_lr is None else plan_lr
         if planning > 0:
@@ -194,7 +214,13 @@ class VisualBrainAgent:
         if ec_q is not None:                                                # arbitration striatum / hippocampus
             ec = ec_q / math.sqrt(self.dopamine.var + 1e-8)                 # same units as the striatum
             scores = torch.where(known, q + self.episodic * ec, q)
-        probs = torch.softmax(scores / self.temperature, -1)
+        if self.actor_critic:                                               # preferences: saturating synapses
+            scores = torch.maximum(scores, scores.max(-1, keepdim=True).values - self.max_gap)
+        temperature = torch.full((self.N, 1), 1.0 if self.actor_critic else self.temperature)
+        if self.boredom > 0:                                                # locus coeruleus: explore when rewards dry up
+            temperature = temperature * (1 + self.drought / self.boredom).clamp(max=20.0)[:, None]
+        probs = torch.softmax(scores / temperature, -1)
+        self.probs = probs
         return torch.multinomial(probs, 1, generator=self.gen)[:, 0]
 
     # -------------------------------------------------------------------------------- loop
@@ -205,10 +231,18 @@ class VisualBrainAgent:
     def step(self, frames, reward, done):
         reward = torch.as_tensor(np.asarray(reward), dtype=torch.float32).reshape(self.N)
         done = torch.as_tensor(np.asarray(done), dtype=torch.bool).reshape(self.N)
+        self.drought = torch.where(reward != 0, torch.zeros_like(self.drought), self.drought + 1)
         return self._act(frames, done, reward, self.dopamine(reward, done))
 
     def _act(self, frames, new, raw_reward, r):
         features, codes = self.perceive(frames, new)
+        if r is not None and self.novelty > 0:                              # novelty dopamine, from single features
+            bonus = torch.stack([torch.topk(1.0 / torch.sqrt(1.0 + self.seen[c]), min(4, len(c))).values.mean()
+                                 for c in codes])                           # (pairs are excluded: moving objects
+            r = r + self.novelty * bonus                                    #  make pairs look new all the time)
+        if self.novelty > 0:
+            for c in codes:
+                self.seen[c] += 1
         q = self.q_values(features)
         ec_q = known = keys = None
         if self.episodic > 0:
@@ -216,6 +250,8 @@ class VisualBrainAgent:
             ec_q, known = self.memory.recall(keys)
         action = self.choose(q, ec_q, known)
         q_sa = q.gather(1, action[:, None])[:, 0]
+        if self.actor_critic:
+            q_sa = torch.stack([self.v[f].sum() for f in features])        # critic value of the new state
         if r is not None:
             delta = r + self.gamma * q_sa * (~new) - self.prev_q          # dopamine: reward prediction error
             self._learn(delta)
@@ -229,12 +265,15 @@ class VisualBrainAgent:
         for n in range(self.N):                                            # tag the synapses of this choice
             if new[n]:
                 self.history[n] = []
-            self.history[n].insert(0, (features[n], int(action[n])))
+            self.history[n].insert(0, (features[n], int(action[n]), self.probs[n]))
             del self.history[n][self.trace_len:]
         if self.episodic > 0:
             for n in range(self.N):
                 self.episode[n].append([keys[n], int(action[n]), 0.0])
-        self.prev_q = self.q_values(features).gather(1, action[:, None])[:, 0]
+        if self.actor_critic:
+            self.prev_q = torch.stack([self.v[f].sum() for f in features])
+        else:
+            self.prev_q = self.q_values(features).gather(1, action[:, None])[:, 0]
         if self.planning > 0:
             self.prev_features, self.prev_action = features, action
         return action.numpy()
@@ -260,16 +299,24 @@ class VisualBrainAgent:
         for n in range(self.N):
             if not self.history[n]:
                 continue
-            feats = torch.cat([f for f, _ in self.history[n]])
-            ages = torch.cat([torch.full_like(f, age) for age, (f, _) in enumerate(self.history[n])])
-            acts = torch.cat([torch.full_like(f, a) for f, a in self.history[n]])
-            sizes = torch.cat([torch.full(f.shape, float(max(len(f), 1))) for f, _ in self.history[n]])
+            hist = self.history[n]
+            feats = torch.cat([h[0] for h in hist])
+            ages = torch.cat([torch.full_like(h[0], age) for age, h in enumerate(hist)])
+            acts = torch.cat([torch.full_like(h[0], h[1]) for h in hist])
+            steps = torch.cat([torch.full_like(h[0], age) for age, h in enumerate(hist)])
+            sizes = torch.cat([torch.full(h[0].shape, float(max(len(h[0]), 1))) for h in hist])
             order = torch.argsort(feats * self.trace_len + ages)             # per feature, newest use first
-            feats, ages, acts, sizes = feats[order], ages[order], acts[order], sizes[order]
+            feats, ages, acts, sizes, steps = feats[order], ages[order], acts[order], sizes[order], steps[order]
             first = torch.ones_like(feats, dtype=torch.bool)
             first[1:] = feats[1:] != feats[:-1]
-            rows.append(feats[first]); cols.append(acts[first])
-            vals.append(float(delta[n]) * decay ** ages[first].float() / sizes[first])
+            tag = float(delta[n]) * decay ** ages[first].float() / sizes[first]
+            if self.actor_critic:
+                self.v.index_add_(0, feats[first], self.lr * tag)            # critic: ventral striatum
+                probs = torch.stack([h[2] for h in hist])[steps[first]]      # policy at the time of each tag
+                score = torch.nn.functional.one_hot(acts[first], self.A).float() - probs   # actor eligibility
+                self.w.index_add_(0, feats[first], self.lr_actor * tag[:, None] * score)
+                continue
+            rows.append(feats[first]); cols.append(acts[first]); vals.append(tag)
         if rows:
             self.w.index_put_((torch.cat(rows), torch.cat(cols)), self.lr * torch.cat(vals), accumulate=True)
 

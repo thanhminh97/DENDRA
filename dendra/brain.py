@@ -186,6 +186,8 @@ class BrainAgent:
     temperature       softmax temperature of the channel choice
     explore           bonus for actions rarely tried in the current situation (0 = off)
     adaptive          divide rewards by the running spread of the return (adaptive dopamine coding)
+    novelty           novelty dopamine: intrinsic reward novelty / sqrt(1 + visits) of the least visited firing
+                      cells, added to the reward so that it propagates to the states that lead there (0 = off)
     consolidation     metaplasticity: a synapse that has been used n times learns at rate
                       lr / sqrt(1 + consolidation * n), but never below lr * min_plasticity (0 = off)
     """
@@ -193,10 +195,11 @@ class BrainAgent:
     def __init__(self, obs_dim, n_actions=None, action_low=None, action_high=None, n_envs=1,
                  areas=16, subspace=4, n_units=1024, k=4, radius=0.3, field=2.0, timescales=(2.0, 8.0),
                  gamma=0.99, lam=0.9, lr=0.2, temperature=0.01, explore=0.3, levels=5, primary_max=8,
-                 adaptive=True, consolidation=0.0, min_plasticity=0.1, seed=0):
+                 adaptive=True, consolidation=0.0, min_plasticity=0.1, novelty=0.0, seed=0):
         self.N, self.gamma, self.lam, self.lr = n_envs, gamma, lam, lr
         self.temperature, self.explore = temperature, explore
         self.consolidation, self.min_plasticity = consolidation, min_plasticity
+        self.novelty = novelty
         self.gen = torch.Generator().manual_seed(seed)
         self.context = TemporalContext(obs_dim, n_envs, timescales)
         self.senses = SensoryAdaptation(self.context.out_dim)
@@ -212,6 +215,7 @@ class BrainAgent:
         else:
             self.D, self.L = 1, n_actions
         U = self.cortex.n_units
+        self.visits = torch.zeros(U)                             # how often each place cell has fired
         self.w = torch.zeros(U, self.D, self.L)                  # cortico-striatal synapses
         self.tags = torch.zeros(n_envs, U, self.D, self.L)       # eligibility tags
         self.tried = torch.zeros(U, self.D, self.L)              # how often each channel was chosen from each unit
@@ -223,7 +227,7 @@ class BrainAgent:
         x = torch.as_tensor(np.asarray(obs), dtype=torch.float32).reshape(self.N, -1)
         active, firing = self.cortex(self.senses(self.context(x, new_episode)))
         for unit in self.cortex.recycled:                        # a recycled unit starts with blank synapses
-            self.w[unit] = 0; self.tags[:, unit] = 0; self.tried[unit] = 0
+            self.w[unit] = 0; self.tags[:, unit] = 0; self.tried[unit] = 0; self.visits[unit] = 0
         return active, firing
 
     # -------------------------------------------------------------------------------- striatum
@@ -277,6 +281,10 @@ class BrainAgent:
         done = torch.as_tensor(np.asarray(done), dtype=torch.bool).reshape(self.N)
         r = self.dopamine(reward, done)
         active, firing = self.perceive(obs, done)
+        if self.novelty > 0:                                     # novelty dopamine (least visited firing cells)
+            novel = torch.where(firing > 0, 1.0 / torch.sqrt(1.0 + self.visits[active]), torch.zeros_like(firing))
+            r = r + self.novelty * torch.topk(novel, 4, dim=-1).values.mean(-1)
+            self.visits.index_add_(0, active.flatten(), firing.flatten())
         q = self.channel_values(active, firing)
         choice = self.choose(q, active, firing)
         delta = r + self.gamma * self.value_of(q, choice) * (~done) - self.prev       # dopamine: prediction error

@@ -11,7 +11,9 @@ We compare it with PPO, using an MLP (with frame stacking when velocities are hi
 - **At 300k steps:** PPO-MLP catches up or overtakes. DENDRA-Brain's advantage is speed of learning, not final performance.
 - **Weaknesses:** high variance between seeds, some degradation late in training, and so far only low-dimensional sensors (no vision).
 
-**Part II** adds a visual cortex, hippocampal long-term memory and planning, and tests the agent on Atari. There it does **not** learn: it stays near random play and below PPO-CNN once PPO has enough data. Section 9 explains why.
+**Part II** adds a visual cortex, hippocampal long-term memory and planning, and tests the agent on Atari.
+- **First version:** it does not learn (section 9 explains why).
+- **After diagnosis (v2: actor–critic basal ganglia + novelty dopamine, section 11):** it solves Freeway at 100k steps (21.7, PPO-CNN 6.9, SPR 21), but Breakout and Boxing stay at random level.
 
 ---
 
@@ -206,7 +208,14 @@ Code: `dendra/brain.py` (the agent), `experiments/rl/run_brain.py`, `experiments
 
 Test it on real Atari games.
 
-**Result in short: it does not work yet.**
+**Result in short.**
+- **First version (v1):** it does not learn. Sections 7–9 describe it.
+- **Second round (v2, section 11):**
+  - Diagnosis showed that exploration, not vision, was the first problem.
+  - With an actor–critic striatum and novelty dopamine, the agent **solves Freeway** with local rules only: 21.7 ± 0.2 at 100k steps, versus PPO-CNN 6.9 and SPR 21.
+  - Breakout and Boxing remain at random level.
+
+**First version, in short: it does not work.**
 - At 100k steps, both DENDRA-Brain and PPO-CNN stay near random play on Breakout, Boxing and Freeway.
 - With 5x more data (Breakout, 500k steps), PPO starts to learn (9.3) and DENDRA-Brain does not (1.6).
 - Published sample-efficient deep-RL methods reach 13–38 on these games at 100k steps.
@@ -295,7 +304,10 @@ These published methods use deep networks trained by backpropagation, replay wit
 ## 10. Reproducing Part II
 
 ```bash
-python experiments/rl/run_visual_brain.py --game Breakout --steps 100000 --seed 10 --set episodic=1.0 planning=4 --out runs/atari/full_Breakout_s10.json
+# v1 (Sarsa + memory + planning)
+python experiments/rl/run_visual_brain.py --game Breakout --steps 100000 --seed 10 --set actor_critic=False novelty=0 episodic=1.0 planning=4 --out runs/atari/full_Breakout_s10.json
+# v2 (the defaults: actor-critic + novelty dopamine)
+python experiments/rl/run_visual_brain.py --game Freeway --steps 100000 --seed 10 --out runs/atari/v2_Freeway_s10.json
 python experiments/rl/ppo.py --env atari:Breakout --core mlp --total 100000 --seed 10 --device cpu --out runs/atari/ppo_Breakout_s10.json
 python experiments/rl/plot_atari.py experiments/results/brain_atari/main_100k figures/brain_atari.png
 ```
@@ -306,3 +318,52 @@ Additional references (Part II):
 - Liang, Y., Machado, M. C., Talvitie, E., Bowling, M. *State of the art control of Atari games using shallow reinforcement learning.* AAMAS 2016.
 - Mattar, M. G., Daw, N. D. *Prioritized memory access explains planning and hippocampal replay.* Nature Neuroscience 21, 2018.
 - Schwarzer, M. et al. *Data-efficient reinforcement learning with self-predictive representations (SPR).* ICLR 2021.
+
+## 11. Second round: diagnosis and v2
+
+**Step 1: what really went wrong.** The action statistics during training showed that the first problem was exploration collapse, not vision.
+- In Breakout, the probability of pressing FIRE fell to exactly 0 by 40k steps.
+- Without FIRE the ball is never relaunched after a lost life, so no reward arrives again and the values decay to 0.
+- The agent then waits forever. This is why the 500k run had so few episodes.
+
+**Step 2: an oracle test separates vision from learning.** The same learning core was given the true game variables from RAM instead of pixels:
+- **Breakout:** ball x/y and paddle x.
+- **Freeway:** chicken height and car positions.
+
+It still learned little: Breakout 1.7 → 3.4, Freeway 0. So the learning core itself was too weak for these games, independent of vision. Two causes emerged:
+1. **Exploration bonuses that do not propagate.** The action-novelty bonus of Part I changes only the choice in the current state. It never enters the values, so "moving up leads to places never seen" is not learned. MountainCar worked only because its −1 per step made values that start at zero optimistic.
+2. **Tags that are too short for Atari delays.** With true variables, longer eligibility tags (λ = 0.97) raised Breakout from 3.4 to 5.1.
+
+**Step 3: two brain mechanisms that fix exploration.**
+- **Novelty dopamine** (Kakade & Dayan, 2002). Dopamine neurons fire for novel stimuli. The novelty of the least-seen features is added to the reward, so it propagates through learning to the states that lead to novelty.
+  - Core agent: with true variables, Freeway rises from 0 to **21–23** (`dendra/brain.py`, option `novelty`).
+  - Vision agent: novelty is computed on single visual features only. Feature *pairs* of the moving cars look new all the time and drown the signal.
+- **Actor–critic basal ganglia** (O'Doherty et al., 2004).
+  - The ventral striatum learns the state value V(s) (critic); the dorsal striatum learns action preferences (actor). Both learn from the same dopamine δ = r + γV(s') − V(s).
+  - With Sarsa, action differences come only from small differences in long-run value and are lost in noise. Actor preferences instead keep growing as long as an action does better than expected.
+  - Synaptic saturation (a preference can fall at most 4 below the best) guarantees that every action keeps being tried. This prevents the FIRE collapse.
+  - With vision on Freeway, Sarsa + novelty still scores 0, while actor–critic + novelty scores 22.
+
+**Also tried, without effect:** a "boredom" mechanism, where noradrenaline raises exploration after a long time without reward (adaptive gain theory, Aston-Jones & Cohen, 2005). It makes behaviour more random, which does not help when the problem needs *directed* exploration.
+
+**v2 = vision + conjunctions + actor–critic striatum + novelty dopamine.** There is no hippocampal memory and no planning, since neither helped in v1. The configuration was fixed on seed 0 before the evaluation on seeds 10–12:
+
+| Game | Random | PPO-CNN | v1 | **v2** | Published at 100k: SPR / Rainbow (enh.) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Freeway | 0.0 | 6.9 ± 9.6 | 0.0 ± 0.0 | **21.7 ± 0.2** (21.5, 21.6, 21.9) | 21 / 6 |
+| Breakout | 1.7 | 2.0 ± 0.3 | 2.4 ± 0.4 | 1.4 ± 0.4 | 13 / 14 |
+| Boxing | 0.1 | 0.7 ± 1.0 | −0.3 ± 0.1 | −0.7 ± 1.1 | 38 / 28 |
+
+![Atari, 100k steps: v1, v2 and PPO-CNN](figures/brain_atari.png)
+
+- **Freeway: solved on every seed, learned within the first episodes.** v2 averages 11.5 over the first 20 episodes; PPO needed tens of thousands of steps and found it on only 1 of 3 seeds. This is the first Atari game where the brain-like agent clearly beats PPO-CNN, and it matches SPR (21).
+- **Breakout and Boxing: still at random level,** and v2 ends slightly *below* random on Breakout. These games need fast, precise reactions to small objects: where the ball is, where the opponent's head is. The visual code resolves positions only on an 8-pixel grid after pooling, and nothing tells the cortex which features matter. The oracle test shows what a better code could give (Breakout 5.1 with true variables and long tags), but that is still far from SPR.
+
+**Next steps:**
+- **Finer, reward-relevant visual codes:** less pooling for small moving objects, and dopamine-gated plasticity in V2.
+- **Longer eligibility tags in the vision agent:** the oracle test showed they matter.
+- **A predictive visual cortex** that learns locally to predict the next frame and the reward.
+
+Additional references (section 11):
+- Aston-Jones, G., Cohen, J. D. *An integrative theory of locus coeruleus-norepinephrine function: adaptive gain and optimal performance.* Annual Review of Neuroscience 28, 2005.
+- O'Doherty, J. et al. *Dissociable roles of ventral and dorsal striatum in instrumental conditioning.* Science 304, 2004.

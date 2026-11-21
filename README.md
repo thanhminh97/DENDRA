@@ -15,7 +15,7 @@
 >
 > At 16M parameters on Vietnamese TinyStories (BPE tokenizer), both models tell coherent stories, but GPT reaches a lower perplexity after the same 4,000 steps: 6.8 versus 7.6. With CUDA Graphs and `torch.compile`, DENDRA generates text 4–6x faster and trains 1.6x faster than the naive implementation.
 >
-> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. On the real Atari Breakout (Kaggle GPU, 2M steps, 1 seed) it ends slightly above the LSTM (≈ 37 vs ≈ 34). With continuous actions (Pendulum and MuJoCo HalfCheetah, both with hidden velocities) it does not yet beat simple networks: on HalfCheetah it reaches about half the LSTM's return. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory. A new, separate design for reinforcement learning, **DENDRA-Brain** ([BRAIN.md](BRAIN.md)), learns online with local rules only: no backpropagation, no PPO. In 100k steps it learns faster than PPO on six control tasks and ends best on five of them; with 3x more data PPO catches up. From Atari pixels it does not learn yet.
+> In reinforcement learning (meta-RL on bandits), DENDRA learns an exploration strategy on par with Thompson Sampling and needs 2–3x less experience than LSTM/GPT, but generalizes worst when episodes are longer than in training. With PPO on an Atari-style game (MinAtar Breakout, discrete actions), DENDRA scores 12.9 versus 8.9 for a parameter-matched LSTM. On the real Atari Breakout (Kaggle GPU, 2M steps, 1 seed) it ends slightly above the LSTM (≈ 37 vs ≈ 34). With continuous actions (Pendulum and MuJoCo HalfCheetah, both with hidden velocities) it does not yet beat simple networks: on HalfCheetah it reaches about half the LSTM's return. Trained **without backpropagation**, with a dopamine-modulated three-factor rule, DENDRA still learns CartPole about as well as with exact gradients on the same schedule (295 versus 313), but it fails once the task needs memory. A new, separate design for reinforcement learning, **DENDRA-Brain** ([BRAIN.md](BRAIN.md)), learns online with local rules only: no backpropagation, no PPO. In 100k steps it learns faster than PPO on six control tasks and ends best on five of them; with 3x more data PPO catches up. From Atari pixels, it solves Freeway (21.7 vs 6.9 for PPO-CNN) but not Breakout or Boxing.
 
 ---
 
@@ -532,6 +532,8 @@ With 100k environment steps and 3 held-out seeds, against PPO (MLP and LSTM):
 - **At 500k steps on Breakout:** PPO learns (9.3) and DENDRA-Brain does not (1.6).
 
 The likely reason is that, without backpropagation, no reward signal reaches the visual cortex, so it never learns which features matter.
+
+A second round found that the first problem was exploration collapse, not vision. With an actor–critic basal ganglia and novelty dopamine (v2), the agent **solves Freeway** at 100k steps on every held-out seed: 21.7 ± 0.2, versus 6.9 for PPO-CNN and 21 for SPR. Breakout and Boxing remain at random level.
 
 See [BRAIN.md](BRAIN.md) for the architecture, ablations and limitations.
 

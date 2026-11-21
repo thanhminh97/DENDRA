@@ -27,7 +27,8 @@ warnings.filterwarnings("ignore", "Mean of empty slice")
 GAMES = ["Breakout", "Boxing", "Freeway"]
 AGENTS = {
     "ppo": ("PPO-CNN (4 stacked frames)", "#9a9a9a", "--"),
-    "full": ("DENDRA-Brain, all modules", "#2a6fdb", "-"),
+    "v2": ("DENDRA-Brain v2 (actor-critic + novelty)", "#2a6fdb", "-"),
+    "full": ("DENDRA-Brain v1 (Sarsa + memory + planning)", "#9cc0f5", "-"),
     "noplan": ("  - planning (replay)", "#7fb3f5", "-"),
     "nomem": ("  - hippocampal memory", "#a0c4f8", ":"),
     "noconj": ("  - dendritic conjunctions", "#c6dcfb", "-."),
@@ -63,7 +64,7 @@ def main():
             f = np.array([final(r) for r in results])
             speed = np.mean([(r.get("steps") or r.get("total")) / r["time_s"] for r in results])
             print(f"{game:10} {label:36} {f.mean():14.2f} ± {f.std():5.2f} {speed:8.0f}  ({', '.join(f'{x:.1f}' for x in f)})")
-            if kind in ("ppo", "full"):
+            if kind in ("ppo", "full", "v2"):
                 curves = np.array([curve(r, grid) for r in results])
                 ax.plot(grid, np.nanmean(curves, 0), style, color=color, lw=1.8, label=label.strip())
                 if len(results) > 1:
